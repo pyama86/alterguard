@@ -1,0 +1,155 @@
+# GoReleaser configuration
+version: 2
+
+project_name: alterguard
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: alterguard
+    binary: alterguard
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/pyama86/alterguard/cmd.version={{.Version}}
+    flags:
+      - -trimpath
+
+archives:
+  - id: alterguard
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE*
+      - examples/*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - "^style:"
+      - "^refactor:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: Bug fixes
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: Others
+      order: 999
+
+dockers:
+  - image_templates:
+      - "ghcr.io/pyama86/alterguard:{{ .Version }}-amd64"
+      - "ghcr.io/pyama86/alterguard:latest-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/pyama86/alterguard"
+      - "--platform=linux/amd64"
+    goarch: amd64
+
+  - image_templates:
+      - "ghcr.io/pyama86/alterguard:{{ .Version }}-arm64"
+      - "ghcr.io/pyama86/alterguard:latest-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/pyama86/alterguard"
+      - "--platform=linux/arm64"
+    goarch: arm64
+
+docker_manifests:
+  - name_template: "ghcr.io/pyama86/alterguard:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/pyama86/alterguard:{{ .Version }}-amd64"
+      - "ghcr.io/pyama86/alterguard:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/pyama86/alterguard:latest"
+    image_templates:
+      - "ghcr.io/pyama86/alterguard:latest-amd64"
+      - "ghcr.io/pyama86/alterguard:latest-arm64"
+
+release:
+  github:
+    owner: pyama86
+    name: alterguard
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## alterguard {{ .Version }}
+
+    This release includes the following changes:
+  footer: |
+    ## Docker Images
+
+    Docker images are available at:
+    - `ghcr.io/pyama86/alterguard:{{ .Version }}`
+    - `ghcr.io/pyama86/alterguard:latest`
+
+    ## Installation
+
+    ### Binary
+    Download the appropriate binary for your platform from the assets below.
+
+    ### Docker
+    ```bash
+    docker pull ghcr.io/pyama86/alterguard:{{ .Version }}
+    ```
+
+    ### Go Install
+    ```bash
+    go install github.com/pyama86/alterguard@{{ .Version }}
+    ```
+
+  name_template: "Release {{ .Version }}"
+
+brews:
+  - name: alterguard
+    repository:
+      owner: pyama86
+      name: homebrew-tap
+    commit_author:
+      name: pyama86
+      email: www.kazu.com@gmail.com
+
+    homepage: "https://github.com/pyama86/alterguard"
+    description: "MySQL schema change utility that automatically chooses between ALTER TABLE and pt-online-schema-change"
+    license: "MIT"
+    test: |
+      system "#{bin}/alterguard --help"
+    install: |
+      bin.install "alterguard"

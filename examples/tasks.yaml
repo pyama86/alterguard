@@ -1,0 +1,19 @@
+- name: add_user_column
+  table: users
+  alter_statement: ADD COLUMN foo INT
+  threshold: 1000000
+
+- name: drop_old_index
+  table: orders
+  alter_statement: DROP INDEX ix_old
+  threshold: 500000
+
+- name: modify_product_price
+  table: products
+  alter_statement: MODIFY COLUMN price DECIMAL(10,2) NOT NULL
+  threshold: 100000
+
+- name: add_created_at_index
+  table: logs
+  alter_statement: ADD INDEX ix_created_at (created_at)
+  threshold: 2000000
