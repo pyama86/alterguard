@@ -95,7 +95,7 @@ docker-logs:
 # Run alterguard in Docker environment
 run-docker:
 	@echo "Running alterguard in Docker environment..."
-	docker-compose exec alterguard ./alterguard run --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml --dry-run
+	docker-compose exec alterguard /app/alterguard run --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml --dry-run
 
 # Run pt-osc directly in Docker environment
 run-pt-osc-docker:

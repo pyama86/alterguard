@@ -16,8 +16,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "alterguard",
-	Short: "MySQL schema change utility",
+	Use:          "alterguard",
+	SilenceUsage: true,
+	Short:        "MySQL schema change utility",
 	Long: `alterguard is a MySQL schema change utility that automatically chooses between
 ALTER TABLE and pt-online-schema-change based on table row count.
 

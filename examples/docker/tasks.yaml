@@ -1,0 +1,19 @@
+- name: "Add index to small table"
+  table: "small_table"
+  alter_statement: "ADD INDEX idx_name (name)"
+  threshold: 1000
+
+- name: "Add column to large table"
+  table: "large_table"
+  alter_statement: "ADD COLUMN discount_rate DECIMAL(5,2) DEFAULT 0.00"
+  threshold: 1000
+
+- name: "Modify column in large table"
+  table: "large_table"
+  alter_statement: "MODIFY COLUMN description TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+  threshold: 1000
+
+- name: "Add index to data types table"
+  table: "data_types_table"
+  alter_statement: "ADD INDEX idx_varchar_col (varchar_col)"
+  threshold: 100

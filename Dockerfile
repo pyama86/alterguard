@@ -1,9 +1,6 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23 AS builder
 
 WORKDIR /app
-
-# Install dependencies
-RUN apk add --no-cache git
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -20,6 +17,7 @@ FROM alpine:latest
 
 # Install pt-online-schema-change and dependencies
 RUN apk add --no-cache \
+    file \
     perl \
     perl-dbi \
     perl-dbd-mysql \
@@ -30,7 +28,7 @@ RUN apk add --no-cache \
     https://raw.githubusercontent.com/percona/percona-toolkit/3.x/bin/pt-online-schema-change \
     && chmod +x /usr/local/bin/pt-online-schema-change
 
-WORKDIR /root/
+WORKDIR /app
 
 # Copy the binary from builder stage
 COPY --from=builder /app/alterguard .
@@ -41,5 +39,3 @@ COPY --from=builder /app/examples ./examples
 # Create non-root user
 RUN adduser -D -s /bin/sh alterguard
 USER alterguard
-
-ENTRYPOINT ["./alterguard"]
