@@ -69,28 +69,30 @@ func (m *Manager) ExecuteAllTasks() error {
 		}
 	}
 
-	// Check large tasks count
 	if len(largeTasks) == 0 {
 		m.logger.Info("All tasks completed successfully")
 		return nil
 	}
 
+	// 複数pt-oscがタスクがある場合、最初の一つを実行して残りはスキップ
 	if len(largeTasks) > 1 {
 		taskNames := make([]string, len(largeTasks))
 		for i, task := range largeTasks {
 			taskNames[i] = task.Name
 		}
-		err := fmt.Errorf("multiple large tables detected: %v", taskNames)
+		m.logger.Warnf("Multiple large tasks detected: %v", taskNames)
 
 		// Send Slack notification for multiple large tables
-		for _, task := range largeTasks {
+		for _, task := range largeTasks[1:] { // Skip the first task
 			rowCount, _ := m.db.GetTableRowCount(task.Table)
-			if slackErr := m.slack.NotifyFailure(task.Name, task.Table, rowCount, err); slackErr != nil {
+			// スキップする旨通知する
+			message := fmt.Sprintf("Skipping task %s for table %s with %d rows (threshold: %d)", task.Name, task.Table, rowCount, task.Threshold)
+			m.logger.Warn(message)
+			if slackErr := m.slack.NotifyWarning(task.Name, task.Table, message); slackErr != nil {
 				m.logger.Errorf("Failed to send Slack notification: %v", slackErr)
 			}
 		}
 
-		return err
 	}
 
 	// Execute single large task with pt-osc

@@ -11,7 +11,6 @@ services:
       - "3306:3306"
     volumes:
       - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - mysql_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       timeout: 20s
@@ -45,6 +44,7 @@ services:
     working_dir: /workspace
     environment:
       DATABASE_DSN: "testuser:testpassword@tcp(mysql:3306)/testdb"
+      DEBUG: "true"
     command: tail -f /dev/null
 
 volumes:

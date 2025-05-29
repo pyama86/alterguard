@@ -23,11 +23,12 @@ type SlackNotifier struct {
 
 func NewSlackNotifier(logger *logrus.Logger) (*SlackNotifier, error) {
 	webhookURL := os.Getenv("SLACK_WEBHOOK_URL")
+	var client *slack.Client
 	if webhookURL == "" {
-		return nil, fmt.Errorf("SLACK_WEBHOOK_URL environment variable is not set")
+		logger.Info("SLACK_WEBHOOK_URL environment variable is not set, Slack notifications will be disabled")
+	} else {
+		client = slack.New("", slack.OptionAPIURL(webhookURL))
 	}
-
-	client := slack.New("", slack.OptionAPIURL(webhookURL))
 
 	return &SlackNotifier{
 		client: client,
@@ -64,6 +65,10 @@ func (n *SlackNotifier) NotifyWarning(taskName, tableName string, message string
 }
 
 func (n *SlackNotifier) sendMessage(text, color string) error {
+	if n.client == nil {
+		return nil
+	}
+
 	attachment := slack.Attachment{
 		Color: color,
 		Text:  text,

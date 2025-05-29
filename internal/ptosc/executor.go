@@ -53,18 +53,27 @@ func (e *PtOscExecutor) Execute(task config.Task, ptOscConfig config.PtOscConfig
 	return nil
 }
 
-func (e *PtOscExecutor) BuildArgsWithPassword(task config.Task, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) ([]string, string, error) {
-	host, port, database, user, password, err := e.ParseDSN(dsn)
+func (e *PtOscExecutor) BuildArgsWithPassword(
+	task config.Task,
+	ptOscConfig config.PtOscConfig,
+	rawDSN string,
+	forceDryRun bool,
+) ([]string, string, error) {
+	// ParseDSN はユーザー提供の Go ドライバ形式 DSN (user:pass@tcp(host:port)/db) 等を分解すると想定
+	host, port, database, user, password, err := e.ParseDSN(rawDSN)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to parse DSN: %w", err)
 	}
 
-	// パスワードなしのDSNを構築
-	passwordFreeDSN := fmt.Sprintf("%s@tcp(%s:%s)/%s", user, host, port, database)
+	// PT-OSC 用の DSN を構築 (パスワードは --ask-pass で対話入力)
+	ptOscDSN := fmt.Sprintf(
+		"h=%s,P=%s,D=%s,t=%s,u=%s",
+		host, port, database, task.Table, user,
+	)
 
+	// 引数のビルド
 	args := []string{
 		fmt.Sprintf("--alter=%s", task.AlterStatement),
-		fmt.Sprintf("h=%s,P=%s,D=%s,t=%s", host, port, database, task.Table),
 	}
 
 	if ptOscConfig.Charset != "" {
@@ -72,39 +81,42 @@ func (e *PtOscExecutor) BuildArgsWithPassword(task config.Task, ptOscConfig conf
 	}
 
 	if ptOscConfig.RecursionMethod != "" {
-		recursionMethod := strings.ReplaceAll(ptOscConfig.RecursionMethod, "<db>", database)
-		recursionMethod = strings.ReplaceAll(recursionMethod, "<table>", task.Table)
-		args = append(args, fmt.Sprintf("--recursion-method=%s", recursionMethod))
+		method := strings.ReplaceAll(ptOscConfig.RecursionMethod, "<db>", database)
+		method = strings.ReplaceAll(method, "<table>", task.Table)
+		args = append(args, fmt.Sprintf("--recursion-method=%s", method))
+		if method == "dsn" {
+			// スレーブにも同じ DSN を使う場合
+			args = append(args, fmt.Sprintf("--recursion-dsn=%s", ptOscDSN))
+		}
 	}
 
-	args = append(args, fmt.Sprintf("--dsn=%s", passwordFreeDSN))
-
-	// パスワードがある場合は--ask-passオプションを追加
 	if password != "" {
+		// パスワードがあるときは PT-OSC に書かずに 対話的に入力
 		args = append(args, "--ask-pass")
 	}
 
 	if ptOscConfig.NoSwapTables {
 		args = append(args, "--no-swap-tables")
 	}
-
 	if ptOscConfig.ChunkSize > 0 {
 		args = append(args, fmt.Sprintf("--chunk-size=%d", ptOscConfig.ChunkSize))
 	}
-
 	if ptOscConfig.MaxLag > 0 {
 		args = append(args, fmt.Sprintf("--max-lag=%f", ptOscConfig.MaxLag))
 	}
-
 	if ptOscConfig.Statistics {
 		args = append(args, "--statistics")
 	}
 
+	// dry-run と execute は排他
 	if forceDryRun || ptOscConfig.DryRun {
 		args = append(args, "--dry-run")
+	} else {
+		args = append(args, "--execute")
 	}
 
-	args = append(args, "--execute")
+	// 最後に PT-OSC 用 DSN を１つだけ追加
+	args = append(args, ptOscDSN)
 
 	return args, password, nil
 }
