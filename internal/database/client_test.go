@@ -107,6 +107,38 @@ func TestGetTableRowCount(t *testing.T) {
 	}
 }
 
+func TestExecuteAlterWithDryRun(t *testing.T) {
+	tests := []struct {
+		name           string
+		alterStatement string
+		dryRun         bool
+		expectError    bool
+	}{
+		{
+			name:           "dry run mode",
+			alterStatement: "ADD COLUMN foo INT",
+			dryRun:         true,
+			expectError:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &MySQLClient{db: nil}
+
+			err := client.ExecuteAlterWithDryRun(tt.alterStatement, tt.dryRun)
+
+			if tt.dryRun {
+				assert.NoError(t, err, "dry run should not return error")
+			} else if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestExecuteAlter(t *testing.T) {
 	tests := []struct {
 		name           string

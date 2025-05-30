@@ -30,18 +30,18 @@ pt_osc:
   max_lag: 1.5
   statistics: true
   dry_run: false
+pt_osc_threshold: 1000000
 alert:
   metadata_lock_threshold_seconds: 30
 `,
 			tasksConfig: `
 - name: add_column
-  table: users
-  alter_statement: ADD COLUMN foo INT
+  queries:
+    - "ALTER TABLE users ADD COLUMN foo INT"
   threshold: 1000000
 - name: drop_index
-  table: orders
-  alter_statement: DROP INDEX ix_old
-  threshold: 500000
+  queries:
+    - "ALTER TABLE orders DROP INDEX ix_old"
 `,
 			dsnEnv:        "user:pass@tcp(localhost:3306)/test",
 			expectError:   false,
@@ -50,43 +50,36 @@ alert:
 		},
 		{
 			name:         "missing DSN environment variable",
-			commonConfig: "pt_osc:\n  charset: utf8mb4\nalert:\n  metadata_lock_threshold_seconds: 30",
-			tasksConfig:  "- name: test\n  table: users\n  alter_statement: ADD COLUMN foo INT\n  threshold: 1000",
+			commonConfig: "pt_osc:\n  charset: utf8mb4\npt_osc_threshold: 1000000\nalert:\n  metadata_lock_threshold_seconds: 30",
+			tasksConfig:  "- name: test\n  queries:\n    - \"ALTER TABLE users ADD COLUMN foo INT\"",
 			dsnEnv:       "",
 			expectError:  true,
 		},
 		{
 			name:         "empty tasks",
-			commonConfig: "pt_osc:\n  charset: utf8mb4\nalert:\n  metadata_lock_threshold_seconds: 30",
+			commonConfig: "pt_osc:\n  charset: utf8mb4\npt_osc_threshold: 1000000\nalert:\n  metadata_lock_threshold_seconds: 30",
 			tasksConfig:  "",
 			dsnEnv:       "user:pass@tcp(localhost:3306)/test",
 			expectError:  true,
 		},
 		{
 			name:         "invalid task - missing name",
-			commonConfig: "pt_osc:\n  charset: utf8mb4\nalert:\n  metadata_lock_threshold_seconds: 30",
-			tasksConfig:  "- table: users\n  alter_statement: ADD COLUMN foo INT\n  threshold: 1000",
+			commonConfig: "pt_osc:\n  charset: utf8mb4\npt_osc_threshold: 1000000\nalert:\n  metadata_lock_threshold_seconds: 30",
+			tasksConfig:  "- queries:\n    - \"ALTER TABLE users ADD COLUMN foo INT\"",
 			dsnEnv:       "user:pass@tcp(localhost:3306)/test",
 			expectError:  true,
 		},
 		{
-			name:         "invalid task - missing table",
-			commonConfig: "pt_osc:\n  charset: utf8mb4\nalert:\n  metadata_lock_threshold_seconds: 30",
-			tasksConfig:  "- name: test\n  alter_statement: ADD COLUMN foo INT\n  threshold: 1000",
+			name:         "invalid task - empty queries",
+			commonConfig: "pt_osc:\n  charset: utf8mb4\npt_osc_threshold: 1000000\nalert:\n  metadata_lock_threshold_seconds: 30",
+			tasksConfig:  "- name: test\n  queries: []",
 			dsnEnv:       "user:pass@tcp(localhost:3306)/test",
 			expectError:  true,
 		},
 		{
-			name:         "invalid task - missing alter statement",
-			commonConfig: "pt_osc:\n  charset: utf8mb4\nalert:\n  metadata_lock_threshold_seconds: 30",
-			tasksConfig:  "- name: test\n  table: users\n  threshold: 1000",
-			dsnEnv:       "user:pass@tcp(localhost:3306)/test",
-			expectError:  true,
-		},
-		{
-			name:         "invalid task - zero threshold",
-			commonConfig: "pt_osc:\n  charset: utf8mb4\nalert:\n  metadata_lock_threshold_seconds: 30",
-			tasksConfig:  "- name: test\n  table: users\n  alter_statement: ADD COLUMN foo INT\n  threshold: 0",
+			name:         "invalid task - negative threshold",
+			commonConfig: "pt_osc:\n  charset: utf8mb4\npt_osc_threshold: 1000000\nalert:\n  metadata_lock_threshold_seconds: 30",
+			tasksConfig:  "- name: test\n  queries:\n    - \"ALTER TABLE users ADD COLUMN foo INT\"\n  threshold: -1",
 			dsnEnv:       "user:pass@tcp(localhost:3306)/test",
 			expectError:  true,
 		},
@@ -119,6 +112,7 @@ alert:
 				assert.Equal(t, tt.expectedTasks, len(config.Tasks))
 				assert.Equal(t, tt.expectedDSN, config.DSN)
 				assert.Equal(t, "utf8mb4", config.Common.PtOsc.Charset)
+				assert.Equal(t, int64(1000000), config.Common.PtOscThreshold)
 				assert.Equal(t, 30, config.Common.Alert.MetadataLockThresholdSeconds)
 			}
 		})
@@ -142,6 +136,7 @@ pt_osc:
   max_lag: 1.5
   statistics: true
   dry_run: false
+pt_osc_threshold: 1000000
 alert:
   metadata_lock_threshold_seconds: 30
 `,
@@ -184,13 +179,12 @@ func TestLoadTasksConfig(t *testing.T) {
 			name: "valid tasks",
 			content: `
 - name: add_column
-  table: users
-  alter_statement: ADD COLUMN foo INT
+  queries:
+    - "ALTER TABLE users ADD COLUMN foo INT"
   threshold: 1000000
 - name: drop_index
-  table: orders
-  alter_statement: DROP INDEX ix_old
-  threshold: 500000
+  queries:
+    - "ALTER TABLE orders DROP INDEX ix_old"
 `,
 			expectError: false,
 			expectTasks: 2,

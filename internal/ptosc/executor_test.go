@@ -13,6 +13,10 @@ func TestBuildArgs(t *testing.T) {
 	logger := logrus.New()
 	executor := NewPtOscExecutor(logger)
 
+	threshold1 := int64(1000000)
+	threshold2 := int64(500000)
+	threshold3 := int64(100000)
+
 	tests := []struct {
 		name         string
 		task         config.Task
@@ -24,10 +28,9 @@ func TestBuildArgs(t *testing.T) {
 		{
 			name: "basic configuration",
 			task: config.Task{
-				Name:           "add_column",
-				Table:          "users",
-				AlterStatement: "ADD COLUMN foo INT",
-				Threshold:      1000000,
+				Name:      "add_column",
+				Queries:   []string{"ALTER TABLE users ADD COLUMN foo INT"},
+				Threshold: &threshold1,
 			},
 			ptOscConfig: config.PtOscConfig{
 				Charset:         "utf8mb4",
@@ -42,25 +45,23 @@ func TestBuildArgs(t *testing.T) {
 			forceDryRun: false,
 			expectedArgs: []string{
 				"--alter=ADD COLUMN foo INT",
-				"h=localhost,P=3306,D=testdb,t=users",
 				"--charset=utf8mb4",
 				"--recursion-method=dsn=D=testdb,t=dsns",
-				"--dsn=user@tcp(localhost:3306)/testdb",
 				"--ask-pass",
 				"--no-swap-tables",
 				"--chunk-size=1000",
 				"--max-lag=1.500000",
 				"--statistics",
 				"--execute",
+				"h=localhost,P=3306,D=testdb,t=users,u=user",
 			},
 		},
 		{
 			name: "force dry run",
 			task: config.Task{
-				Name:           "drop_index",
-				Table:          "orders",
-				AlterStatement: "DROP INDEX ix_old",
-				Threshold:      500000,
+				Name:      "drop_index",
+				Queries:   []string{"ALTER TABLE orders DROP INDEX ix_old"},
+				Threshold: &threshold2,
 			},
 			ptOscConfig: config.PtOscConfig{
 				DryRun: false,
@@ -69,20 +70,17 @@ func TestBuildArgs(t *testing.T) {
 			forceDryRun: true,
 			expectedArgs: []string{
 				"--alter=DROP INDEX ix_old",
-				"h=localhost,P=3306,D=testdb,t=orders",
-				"--dsn=user@tcp(localhost:3306)/testdb",
 				"--ask-pass",
 				"--dry-run",
-				"--execute",
+				"h=localhost,P=3306,D=testdb,t=orders,u=user",
 			},
 		},
 		{
 			name: "config dry run",
 			task: config.Task{
-				Name:           "modify_column",
-				Table:          "products",
-				AlterStatement: "MODIFY COLUMN price DECIMAL(10,2)",
-				Threshold:      100000,
+				Name:      "modify_column",
+				Queries:   []string{"ALTER TABLE products MODIFY COLUMN price DECIMAL(10,2)"},
+				Threshold: &threshold3,
 			},
 			ptOscConfig: config.PtOscConfig{
 				DryRun: true,
@@ -91,11 +89,9 @@ func TestBuildArgs(t *testing.T) {
 			forceDryRun: false,
 			expectedArgs: []string{
 				"--alter=MODIFY COLUMN price DECIMAL(10,2)",
-				"h=localhost,P=3306,D=testdb,t=products",
-				"--dsn=user@tcp(localhost:3306)/testdb",
 				"--ask-pass",
 				"--dry-run",
-				"--execute",
+				"h=localhost,P=3306,D=testdb,t=products,u=user",
 			},
 		},
 	}

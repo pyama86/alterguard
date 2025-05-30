@@ -3,6 +3,7 @@ package ptosc
 import (
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -30,12 +31,12 @@ func (e *PtOscExecutor) Execute(task config.Task, ptOscConfig config.PtOscConfig
 		return fmt.Errorf("failed to build pt-osc arguments: %w", err)
 	}
 
-	e.logger.Infof("Executing pt-online-schema-change for table %s", task.Table)
+	tableName := e.extractTableName(task)
+	e.logger.Infof("Executing pt-online-schema-change for table %s", tableName)
 	e.logger.Debugf("Command: pt-online-schema-change %s", strings.Join(args, " "))
 
 	cmd := exec.Command("pt-online-schema-change", args...) // #nosec G204
 
-	// パスワードがある場合は標準入力経由で渡す
 	if password != "" {
 		cmd.Stdin = strings.NewReader(password + "\n")
 	}
@@ -44,10 +45,10 @@ func (e *PtOscExecutor) Execute(task config.Task, ptOscConfig config.PtOscConfig
 
 	if err != nil {
 		e.logger.Errorf("pt-osc execution failed: %s", string(output))
-		return fmt.Errorf("pt-online-schema-change failed for table %s: %w", task.Table, err)
+		return fmt.Errorf("pt-online-schema-change failed for table %s: %w", tableName, err)
 	}
 
-	e.logger.Infof("pt-online-schema-change completed successfully for table %s", task.Table)
+	e.logger.Infof("pt-online-schema-change completed successfully for table %s", tableName)
 	e.logger.Debugf("Output: %s", string(output))
 
 	return nil
@@ -59,21 +60,21 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 	rawDSN string,
 	forceDryRun bool,
 ) ([]string, string, error) {
-	// ParseDSN はユーザー提供の Go ドライバ形式 DSN (user:pass@tcp(host:port)/db) 等を分解すると想定
 	host, port, database, user, password, err := e.ParseDSN(rawDSN)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to parse DSN: %w", err)
 	}
 
-	// PT-OSC 用の DSN を構築 (パスワードは --ask-pass で対話入力)
+	tableName := e.extractTableName(task)
+	alterStatement := e.extractAlterStatement(task)
+
 	ptOscDSN := fmt.Sprintf(
 		"h=%s,P=%s,D=%s,t=%s,u=%s",
-		host, port, database, task.Table, user,
+		host, port, database, tableName, user,
 	)
 
-	// 引数のビルド
 	args := []string{
-		fmt.Sprintf("--alter=%s", task.AlterStatement),
+		fmt.Sprintf("--alter=%s", alterStatement),
 	}
 
 	if ptOscConfig.Charset != "" {
@@ -82,16 +83,14 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 
 	if ptOscConfig.RecursionMethod != "" {
 		method := strings.ReplaceAll(ptOscConfig.RecursionMethod, "<db>", database)
-		method = strings.ReplaceAll(method, "<table>", task.Table)
+		method = strings.ReplaceAll(method, "<table>", tableName)
 		args = append(args, fmt.Sprintf("--recursion-method=%s", method))
 		if method == "dsn" {
-			// スレーブにも同じ DSN を使う場合
 			args = append(args, fmt.Sprintf("--recursion-dsn=%s", ptOscDSN))
 		}
 	}
 
 	if password != "" {
-		// パスワードがあるときは PT-OSC に書かずに 対話的に入力
 		args = append(args, "--ask-pass")
 	}
 
@@ -108,17 +107,37 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 		args = append(args, "--statistics")
 	}
 
-	// dry-run と execute は排他
 	if forceDryRun || ptOscConfig.DryRun {
 		args = append(args, "--dry-run")
 	} else {
 		args = append(args, "--execute")
 	}
 
-	// 最後に PT-OSC 用 DSN を１つだけ追加
 	args = append(args, ptOscDSN)
 
 	return args, password, nil
+}
+
+func (e *PtOscExecutor) extractTableName(task config.Task) string {
+	for _, query := range task.Queries {
+		query = strings.TrimSpace(query)
+		alterTableRe := regexp.MustCompile(`(?i)ALTER\s+TABLE\s+` + "`" + `?([^` + "`" + `\s]+)` + "`" + `?`)
+		if matches := alterTableRe.FindStringSubmatch(query); len(matches) > 1 {
+			return strings.Trim(matches[1], "`")
+		}
+	}
+	return ""
+}
+
+func (e *PtOscExecutor) extractAlterStatement(task config.Task) string {
+	for _, query := range task.Queries {
+		query = strings.TrimSpace(query)
+		alterTableRe := regexp.MustCompile(`(?i)ALTER\s+TABLE\s+` + "`" + `?[^` + "`" + `\s]+` + "`" + `?\s+(.+)`)
+		if matches := alterTableRe.FindStringSubmatch(query); len(matches) > 1 {
+			return matches[1]
+		}
+	}
+	return ""
 }
 
 func (e *PtOscExecutor) ParseDSN(dsn string) (host, port, database, user, password string, err error) {
@@ -130,7 +149,6 @@ func (e *PtOscExecutor) ParseDSN(dsn string) (host, port, database, user, passwo
 	userPart := parts[0]
 	hostPart := parts[1]
 
-	// Parse user:password
 	userParts := strings.Split(userPart, ":")
 	if len(userParts) == 1 {
 		user = userParts[0]

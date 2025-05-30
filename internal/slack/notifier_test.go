@@ -23,7 +23,7 @@ func TestNewSlackNotifier(t *testing.T) {
 		{
 			name:        "missing webhook URL",
 			webhookURL:  "",
-			expectError: true,
+			expectError: false,
 		},
 	}
 

@@ -8,8 +8,9 @@ import (
 )
 
 type CommonConfig struct {
-	PtOsc PtOscConfig `yaml:"pt_osc"`
-	Alert AlertConfig `yaml:"alert"`
+	PtOsc          PtOscConfig `yaml:"pt_osc"`
+	Alert          AlertConfig `yaml:"alert"`
+	PtOscThreshold int64       `yaml:"pt_osc_threshold"`
 }
 
 type PtOscConfig struct {
@@ -27,10 +28,9 @@ type AlertConfig struct {
 }
 
 type Task struct {
-	Name           string `yaml:"name"`
-	Table          string `yaml:"table"`
-	AlterStatement string `yaml:"alter_statement"`
-	Threshold      int64  `yaml:"threshold"`
+	Name      string   `yaml:"name"`
+	Queries   []string `yaml:"queries"`
+	Threshold *int64   `yaml:"threshold,omitempty"`
 }
 
 type Config struct {
@@ -95,14 +95,11 @@ func loadTasksConfig(path string) ([]Task, error) {
 		if task.Name == "" {
 			return nil, fmt.Errorf("task name is empty [index: %d]", i)
 		}
-		if task.Table == "" {
-			return nil, fmt.Errorf("table name is empty [task: %s]", task.Name)
+		if len(task.Queries) == 0 {
+			return nil, fmt.Errorf("queries are empty [task: %s]", task.Name)
 		}
-		if task.AlterStatement == "" {
-			return nil, fmt.Errorf("alter statement is empty [task: %s]", task.Name)
-		}
-		if task.Threshold <= 0 {
-			return nil, fmt.Errorf("invalid threshold [task: %s, threshold: %d]", task.Name, task.Threshold)
+		if task.Threshold != nil && *task.Threshold <= 0 {
+			return nil, fmt.Errorf("invalid threshold [task: %s, threshold: %d]", task.Name, *task.Threshold)
 		}
 	}
 

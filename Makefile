@@ -76,14 +76,10 @@ run-example:
 	@echo "Note: Set DATABASE_DSN and SLACK_WEBHOOK_URL environment variables"
 	./alterguard run --common-config examples/config-common.yaml --tasks-config examples/tasks.yaml --dry-run
 
-# Docker environment build
-docker-build:
-	@echo "Building Docker environment..."
-	docker-compose build
-
 # Docker environment commands
-docker-up: docker-build
+docker-up:
 	@echo "Starting Docker environment..."
+	docker-compose build
 	docker-compose up -d
 	@echo "Waiting for MySQL to be ready..."
 	docker-compose exec mysql mysqladmin ping -h localhost --silent
@@ -100,7 +96,7 @@ docker-logs:
 run-docker-all: docker-down docker-up run-docker
 
 # Run alterguard in Docker environment
-run-docker: docker-build
+run-docker: docker-up
 	@echo "Running alterguard in Docker environment..."
 	docker-compose exec alterguard /app/alterguard run --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml --dry-run
 

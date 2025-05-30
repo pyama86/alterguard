@@ -5,15 +5,25 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 )
 
 type Client interface {
 	GetTableRowCount(table string) (int64, error)
 	ExecuteAlter(alterStatement string) error
+	ExecuteAlterWithDryRun(alterStatement string, dryRun bool) error
 	CheckMetadataLock(table string, thresholdSeconds int) (bool, error)
 	Close() error
+}
+
+func IsDuplicateError(err error) bool {
+	if mysqlErr, ok := err.(*mysql.MySQLError); ok {
+		return mysqlErr.Number == 1062 || // Duplicate entry
+			mysqlErr.Number == 1061 || // Duplicate key name
+			mysqlErr.Number == 1050 // Table already exists
+	}
+	return false
 }
 
 type MySQLClient struct {
@@ -58,6 +68,13 @@ func (c *MySQLClient) ExecuteAlter(alterStatement string) error {
 		return fmt.Errorf("failed to execute ALTER statement [%s]: %w", alterStatement, err)
 	}
 	return nil
+}
+
+func (c *MySQLClient) ExecuteAlterWithDryRun(alterStatement string, dryRun bool) error {
+	if dryRun {
+		return nil
+	}
+	return c.ExecuteAlter(alterStatement)
 }
 
 func (c *MySQLClient) CheckMetadataLock(table string, thresholdSeconds int) (bool, error) {
