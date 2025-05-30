@@ -1,7 +1,9 @@
 package ptosc
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -24,7 +26,6 @@ func NewPtOscExecutor(logger *logrus.Logger) *PtOscExecutor {
 		logger: logger,
 	}
 }
-
 func (e *PtOscExecutor) Execute(task config.Task, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) error {
 	args, password, err := e.BuildArgsWithPassword(task, ptOscConfig, dsn, forceDryRun)
 	if err != nil {
@@ -38,22 +39,46 @@ func (e *PtOscExecutor) Execute(task config.Task, ptOscConfig config.PtOscConfig
 	cmd := exec.Command("pt-online-schema-change", args...) // #nosec G204
 
 	if password != "" {
+		e.logger.Debugf("Using password for pt-online-schema-change")
 		cmd.Stdin = strings.NewReader(password + "\n")
 	}
 
-	output, err := cmd.CombinedOutput()
-
+	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		e.logger.Errorf("pt-osc execution failed: %s", string(output))
+		return fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start command: %w", err)
+	}
+
+	// 標準出力・エラー出力をリアルタイムで読みながらログに出す
+	go e.logOutput(stdoutPipe, false)
+	go e.logOutput(stderrPipe, true)
+
+	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("pt-online-schema-change failed for table %s: %w", tableName, err)
 	}
 
 	e.logger.Infof("pt-online-schema-change completed successfully for table %s", tableName)
-	e.logger.Debugf("Output: %s", string(output))
-
 	return nil
 }
 
+func (e *PtOscExecutor) logOutput(r io.Reader, isError bool) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if isError {
+			e.logger.Errorf("[pt-osc] %s", line)
+		} else {
+			e.logger.Infof("[pt-osc] %s", line)
+		}
+	}
+}
 func (e *PtOscExecutor) BuildArgsWithPassword(
 	task config.Task,
 	ptOscConfig config.PtOscConfig,

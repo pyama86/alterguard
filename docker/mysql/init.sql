@@ -1,3 +1,10 @@
+-- Grant necessary privileges to testuser for pt-online-schema-change
+GRANT REPLICATION CLIENT ON *.* TO 'testuser'@'%';
+GRANT REPLICATION SLAVE ON *.* TO 'testuser'@'%';
+GRANT PROCESS ON *.* TO 'testuser'@'%';
+GRANT SUPER ON *.* TO 'testuser'@'%';
+FLUSH PRIVILEGES;
+
 -- Create test database and tables
 USE testdb;
 
