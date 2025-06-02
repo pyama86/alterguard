@@ -1,51 +1,31 @@
-- name: database_migration_example
-  queries:
-    - "CREATE TABLE `user_profiles` (
-      `id` int unsigned NOT NULL AUTO_INCREMENT,
-      `user_id` int unsigned NOT NULL,
-      `profile_data` json DEFAULT NULL,
-      `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (`id`),
-      UNIQUE KEY `idx_user_profiles_user_id` (`user_id`),
-      INDEX `idx_user_profiles_updated_at` (`updated_at`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-    - "CREATE TABLE `audit_logs` (
-      `id` int unsigned NOT NULL AUTO_INCREMENT,
-      `table_name` varchar(64) NOT NULL,
-      `record_id` int unsigned NOT NULL,
-      `action` varchar(20) NOT NULL,
-      `old_values` json DEFAULT NULL,
-      `new_values` json DEFAULT NULL,
-      `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (`id`),
-      INDEX `idx_audit_logs_table_record` (`table_name`, `record_id`),
-      INDEX `idx_audit_logs_created_at` (`created_at`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-    - "ALTER TABLE `users` DROP INDEX `old_email_index`"
-    - "ALTER TABLE `users` DROP COLUMN `deprecated_field`"
-    - "DROP TABLE IF EXISTS `temp_migration_table`"
-  threshold: 500000
-
-- name: add_user_column
-  queries:
-    - "ALTER TABLE users ADD COLUMN status VARCHAR(20) DEFAULT 'active'"
-  threshold: 1000000
-
-- name: drop_old_index
-  queries:
-    - "ALTER TABLE orders DROP INDEX ix_legacy_status"
-
-- name: modify_product_price
-  queries:
-    - "ALTER TABLE products MODIFY COLUMN price DECIMAL(10,2) NOT NULL"
-  threshold: 100000
-
-- name: add_performance_index
-  queries:
-    - "ALTER TABLE logs ADD INDEX ix_created_at_status (created_at, status)"
-
-- name: cleanup_old_tables
-  queries:
-    - "DROP TABLE IF EXISTS old_user_sessions"
-    - "DROP TABLE IF EXISTS deprecated_cache_table"
+- "CREATE TABLE `user_profiles` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `user_id` int unsigned NOT NULL,
+  `profile_data` json DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_user_profiles_user_id` (`user_id`),
+  INDEX `idx_user_profiles_updated_at` (`updated_at`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+- "CREATE TABLE `audit_logs` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `table_name` varchar(64) NOT NULL,
+  `record_id` int unsigned NOT NULL,
+  `action` varchar(20) NOT NULL,
+  `old_values` json DEFAULT NULL,
+  `new_values` json DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  INDEX `idx_audit_logs_table_record` (`table_name`, `record_id`),
+  INDEX `idx_audit_logs_created_at` (`created_at`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+- "ALTER TABLE `users` DROP INDEX `old_email_index`"
+- "ALTER TABLE `users` DROP COLUMN `deprecated_field`"
+- "DROP TABLE IF EXISTS `temp_migration_table`"
+- "ALTER TABLE users ADD COLUMN status VARCHAR(20) DEFAULT 'active'"
+- "ALTER TABLE orders DROP INDEX ix_legacy_status"
+- "ALTER TABLE products MODIFY COLUMN price DECIMAL(10,2) NOT NULL"
+- "ALTER TABLE logs ADD INDEX ix_created_at_status (created_at, status)"
+- "DROP TABLE IF EXISTS old_user_sessions"
+- "DROP TABLE IF EXISTS deprecated_cache_table"

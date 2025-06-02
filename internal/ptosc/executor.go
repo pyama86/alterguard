@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -14,7 +13,7 @@ import (
 )
 
 type Executor interface {
-	Execute(task config.Task, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) error
+	ExecuteAlter(tableName, alterStatement string, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) error
 }
 
 type PtOscExecutor struct {
@@ -26,14 +25,13 @@ func NewPtOscExecutor(logger *logrus.Logger) *PtOscExecutor {
 		logger: logger,
 	}
 }
-func (e *PtOscExecutor) Execute(task config.Task, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) error {
-	args, password, err := e.BuildArgsWithPassword(task, ptOscConfig, dsn, forceDryRun)
+
+func (e *PtOscExecutor) ExecuteAlter(tableName, alterStatement string, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) error {
+	args, password, err := e.BuildArgsWithPassword(tableName, alterStatement, ptOscConfig, dsn, forceDryRun)
 	if err != nil {
 		return fmt.Errorf("failed to build pt-osc arguments: %w", err)
 	}
 
-	tableName := e.extractTableName(task)
-	e.logger.Infof("Executing pt-online-schema-change for table %s", tableName)
 	e.logger.Debugf("Command: pt-online-schema-change %s", strings.Join(args, " "))
 
 	cmd := exec.Command("pt-online-schema-change", args...) // #nosec G204
@@ -56,7 +54,6 @@ func (e *PtOscExecutor) Execute(task config.Task, ptOscConfig config.PtOscConfig
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	// 標準出力・エラー出力をリアルタイムで読みながらログに出す
 	go e.logOutput(stdoutPipe, false)
 	go e.logOutput(stderrPipe, true)
 
@@ -79,8 +76,9 @@ func (e *PtOscExecutor) logOutput(r io.Reader, isError bool) {
 		}
 	}
 }
+
 func (e *PtOscExecutor) BuildArgsWithPassword(
-	task config.Task,
+	tableName, alterStatement string,
 	ptOscConfig config.PtOscConfig,
 	rawDSN string,
 	forceDryRun bool,
@@ -89,9 +87,6 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to parse DSN: %w", err)
 	}
-
-	tableName := e.extractTableName(task)
-	alterStatement := e.extractAlterStatement(task)
 
 	ptOscDSN := fmt.Sprintf(
 		"h=%s,P=%s,D=%s,t=%s,u=%s",
@@ -132,6 +127,18 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 		args = append(args, "--statistics")
 	}
 
+	if ptOscConfig.NoDropTriggers {
+		args = append(args, "--no-drop-triggers")
+	}
+
+	if ptOscConfig.NoDropNewTable {
+		args = append(args, "--no-drop-new-table")
+	}
+
+	if ptOscConfig.NoDropOldTable {
+		args = append(args, "--no-drop-old-table")
+	}
+
 	if forceDryRun || ptOscConfig.DryRun {
 		args = append(args, "--dry-run")
 	} else {
@@ -141,28 +148,6 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 	args = append(args, ptOscDSN)
 
 	return args, password, nil
-}
-
-func (e *PtOscExecutor) extractTableName(task config.Task) string {
-	for _, query := range task.Queries {
-		query = strings.TrimSpace(query)
-		alterTableRe := regexp.MustCompile(`(?i)ALTER\s+TABLE\s+` + "`" + `?([^` + "`" + `\s]+)` + "`" + `?`)
-		if matches := alterTableRe.FindStringSubmatch(query); len(matches) > 1 {
-			return strings.Trim(matches[1], "`")
-		}
-	}
-	return ""
-}
-
-func (e *PtOscExecutor) extractAlterStatement(task config.Task) string {
-	for _, query := range task.Queries {
-		query = strings.TrimSpace(query)
-		alterTableRe := regexp.MustCompile(`(?i)ALTER\s+TABLE\s+` + "`" + `?[^` + "`" + `\s]+` + "`" + `?\s+(.+)`)
-		if matches := alterTableRe.FindStringSubmatch(query); len(matches) > 1 {
-			return matches[1]
-		}
-	}
-	return ""
 }
 
 func (e *PtOscExecutor) ParseDSN(dsn string) (host, port, database, user, password string, err error) {

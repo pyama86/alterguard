@@ -22,8 +22,8 @@ type Manager struct {
 	dryRun bool
 }
 
-type TaskResult struct {
-	Task     config.Task
+type QueryResult struct {
+	Query    string
 	Duration time.Duration
 	Success  bool
 	Error    error
@@ -33,6 +33,13 @@ type QueryInfo struct {
 	Query     string
 	QueryType string
 	TableName string
+}
+
+type TableGroup struct {
+	TableName    string
+	AlterParts   []string
+	OtherQueries []QueryInfo
+	RowCount     int64
 }
 
 func NewManager(db database.Client, ptoscExec ptosc.Executor, slackNotifier slack.Notifier, logger *logrus.Logger, cfg *config.Config, dryRun bool) *Manager {
@@ -47,130 +54,135 @@ func NewManager(db database.Client, ptoscExec ptosc.Executor, slackNotifier slac
 }
 
 func (m *Manager) ExecuteAllTasks() error {
-	m.logger.Infof("Starting execution of %d tasks", len(m.config.Tasks))
+	m.logger.Infof("Starting execution of %d queries", len(m.config.Queries))
 
-	for _, task := range m.config.Tasks {
-		if err := m.executeTask(task); err != nil {
-			return fmt.Errorf("failed to execute task %s: %w", task.Name, err)
+	queries, err := m.parseQueries(m.config.Queries)
+	if err != nil {
+		return fmt.Errorf("failed to parse queries: %w", err)
+	}
+
+	tableGroups := m.groupQueriesByTable(queries)
+
+	for tableName, group := range tableGroups {
+		if err := m.executeTableGroup(tableName, group); err != nil {
+			return fmt.Errorf("failed to execute queries for table %s: %w", tableName, err)
 		}
 	}
 
-	m.logger.Info("All tasks completed successfully")
+	for _, query := range queries {
+		if query.TableName == "" {
+			if err := m.executeQuery(&query, "non-table-query"); err != nil {
+				return fmt.Errorf("failed to execute query: %w", err)
+			}
+		}
+	}
+
+	m.logger.Info("All queries completed successfully")
 	return nil
 }
 
-func (m *Manager) executeTask(task config.Task) error {
-	m.logger.Infof("Starting task: %s", task.Name)
-	start := time.Now()
+func (m *Manager) groupQueriesByTable(queries []QueryInfo) map[string]*TableGroup {
+	groups := make(map[string]*TableGroup)
 
-	threshold := m.getThreshold(task)
-	queries, err := m.parseQueries(task.Queries)
-	if err != nil {
-		return err
-	}
-
-	smallQueries := []QueryInfo{}
-	largeQueries := []QueryInfo{}
-
-	for _, queryInfo := range queries {
-		if queryInfo.QueryType != "ALTER" {
-			smallQueries = append(smallQueries, queryInfo)
+	for _, query := range queries {
+		if query.TableName == "" {
 			continue
 		}
 
-		if queryInfo.TableName == "" {
-			smallQueries = append(smallQueries, queryInfo)
-			continue
-		}
-
-		rowCount, err := m.db.GetTableRowCount(queryInfo.TableName)
-		if err != nil {
-			m.logger.Warnf("Failed to get row count for table %s, treating as small query: %v", queryInfo.TableName, err)
-			smallQueries = append(smallQueries, queryInfo)
-			continue
-		}
-
-		m.logger.Infof("Table %s has %d rows (threshold: %d)", queryInfo.TableName, rowCount, threshold)
-
-		if rowCount <= threshold {
-			smallQueries = append(smallQueries, queryInfo)
-		} else {
-			largeQueries = append(largeQueries, queryInfo)
-		}
-	}
-
-	if err := m.executeSmallQueries(task, smallQueries); err != nil {
-		return err
-	}
-
-	if len(largeQueries) > 0 {
-		if len(largeQueries) > 1 {
-			m.logger.Warnf("Multiple large queries detected in task %s, only first will be executed with pt-osc", task.Name)
-			for _, queryInfo := range largeQueries[1:] {
-				warning := fmt.Sprintf("Skipping large query in task %s: %s", task.Name, queryInfo.Query)
-				m.logger.Warn(warning)
-				if slackErr := m.slack.NotifyWarning(task.Name, queryInfo.TableName, warning); slackErr != nil {
-					m.logger.Errorf("Failed to send Slack notification: %v", slackErr)
-				}
+		if _, exists := groups[query.TableName]; !exists {
+			groups[query.TableName] = &TableGroup{
+				TableName:    query.TableName,
+				AlterParts:   []string{},
+				OtherQueries: []QueryInfo{},
 			}
 		}
 
-		if err := m.executeLargeQuery(task, largeQueries[0]); err != nil {
-			return err
+		if query.QueryType == "ALTER" {
+			alterPart := m.extractAlterStatement(query.Query)
+			if alterPart != "" {
+				groups[query.TableName].AlterParts = append(groups[query.TableName].AlterParts, alterPart)
+			}
+		} else {
+			groups[query.TableName].OtherQueries = append(groups[query.TableName].OtherQueries, query)
 		}
 	}
 
-	duration := time.Since(start)
-	m.logger.Infof("Task %s completed in %s", task.Name, duration)
-	return nil
+	return groups
 }
 
-func (m *Manager) executeSmallQueries(task config.Task, queries []QueryInfo) error {
-	for _, queryInfo := range queries {
-		m.logger.Infof("Executing query: %s", queryInfo.Query)
+func (m *Manager) executeTableGroup(tableName string, group *TableGroup) error {
+	m.logger.Infof("Processing table: %s", tableName)
 
-		if err := m.executeQuery(&queryInfo, task.Name); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *Manager) executeLargeQuery(task config.Task, queryInfo QueryInfo) error {
-	if queryInfo.QueryType != "ALTER" {
-		return fmt.Errorf("pt-osc can only be used with ALTER statements, got: %s", queryInfo.QueryType)
+	if err := m.executeSmallQueries(group.OtherQueries); err != nil {
+		return err
 	}
 
-	rowCount, err := m.db.GetTableRowCount(queryInfo.TableName)
+	if len(group.AlterParts) == 0 {
+		return nil
+	}
+
+	rowCount, err := m.db.GetTableRowCount(tableName)
 	if err != nil {
-		return fmt.Errorf("failed to get row count: %w", err)
+		m.logger.Warnf("Failed to get row count for table %s, treating as small query: %v", tableName, err)
+		return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts)
 	}
 
-	m.logger.Infof("Executing pt-online-schema-change for table %s (rows: %d)", queryInfo.TableName, rowCount)
+	threshold := m.config.Common.PtOscThreshold
+	m.logger.Infof("Table %s has %d rows (threshold: %d)", tableName, rowCount, threshold)
 
-	if err := m.slack.NotifyStart(task.Name, queryInfo.TableName, rowCount); err != nil {
+	if rowCount <= threshold {
+		return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts)
+	} else {
+		return m.executeLargeAlterQuery(tableName, group.AlterParts, rowCount)
+	}
+}
+
+func (m *Manager) executeAlterPartsAsSmallQueries(tableName string, alterParts []string) error {
+	for _, alterPart := range alterParts {
+		query := fmt.Sprintf("ALTER TABLE %s %s", tableName, alterPart)
+		queryInfo := QueryInfo{
+			Query:     query,
+			QueryType: "ALTER",
+			TableName: tableName,
+		}
+		if err := m.executeQuery(&queryInfo, "small-alter"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, rowCount int64) error {
+	combinedAlter := strings.Join(alterParts, ", ")
+	m.logger.Infof("Executing pt-online-schema-change for table %s (rows: %d)", tableName, rowCount)
+
+	if err := m.slack.NotifyStart("large-alter", tableName, rowCount); err != nil {
 		m.logger.Errorf("Failed to send start notification: %v", err)
 	}
 
 	start := time.Now()
-	alterStatement := m.extractAlterStatement(queryInfo.Query)
-	legacyTask := config.Task{
-		Name:    task.Name,
-		Queries: []string{fmt.Sprintf("ALTER TABLE %s %s", queryInfo.TableName, alterStatement)},
-	}
-
-	if err := m.ptosc.Execute(legacyTask, m.config.Common.PtOsc, m.config.DSN, m.dryRun); err != nil {
-		if slackErr := m.slack.NotifyFailure(task.Name, queryInfo.TableName, rowCount, err); slackErr != nil {
+	if err := m.ptosc.ExecuteAlter(tableName, combinedAlter, m.config.Common.PtOsc, m.config.DSN, m.dryRun); err != nil {
+		if slackErr := m.slack.NotifyFailure("large-alter", tableName, rowCount, err); slackErr != nil {
 			m.logger.Errorf("Failed to send failure notification: %v", slackErr)
 		}
 		return fmt.Errorf("pt-online-schema-change failed: %w", err)
 	}
 
 	duration := time.Since(start)
-	if err := m.slack.NotifySuccess(task.Name, queryInfo.TableName, rowCount, duration); err != nil {
+	if err := m.slack.NotifySuccess("large-alter", tableName, rowCount, duration); err != nil {
 		m.logger.Errorf("Failed to send success notification: %v", err)
 	}
 
+	return nil
+}
+
+func (m *Manager) executeSmallQueries(queries []QueryInfo) error {
+	for _, queryInfo := range queries {
+		m.logger.Infof("Executing query: %s", queryInfo.Query)
+		if err := m.executeQuery(&queryInfo, "small-query"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -182,7 +194,7 @@ func (m *Manager) executeQuery(queryInfo *QueryInfo, taskName string) error {
 
 	if err := m.db.ExecuteAlter(queryInfo.Query); err != nil {
 		if database.IsDuplicateError(err) {
-			warning := fmt.Sprintf("Duplicate detected in task %s: %s (query: %s)", taskName, err.Error(), queryInfo.Query)
+			warning := fmt.Sprintf("Duplicate detected in %s: %s (query: %s)", taskName, err.Error(), queryInfo.Query)
 			m.logger.Warn(warning)
 
 			if slackErr := m.slack.NotifyWarning(taskName, queryInfo.TableName, warning); slackErr != nil {
@@ -254,13 +266,6 @@ func (m *Manager) extractAlterStatement(query string) string {
 		return matches[1]
 	}
 	return ""
-}
-
-func (m *Manager) getThreshold(task config.Task) int64 {
-	if task.Threshold != nil {
-		return *task.Threshold
-	}
-	return m.config.Common.PtOscThreshold
 }
 
 func (m *Manager) SwapTable(tableName string) error {

@@ -3,6 +3,7 @@ GRANT REPLICATION CLIENT ON *.* TO 'testuser'@'%';
 GRANT REPLICATION SLAVE ON *.* TO 'testuser'@'%';
 GRANT PROCESS ON *.* TO 'testuser'@'%';
 GRANT SUPER ON *.* TO 'testuser'@'%';
+GRANT SELECT ON performance_schema.metadata_locks TO 'testuser'@'%';
 FLUSH PRIVILEGES;
 
 -- Create test database and tables

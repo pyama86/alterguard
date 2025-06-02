@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,22 +22,19 @@ type PtOscConfig struct {
 	MaxLag          float64 `yaml:"max_lag"`
 	Statistics      bool    `yaml:"statistics"`
 	DryRun          bool    `yaml:"dry_run"`
+	NoDropTriggers  bool    `yaml:"no_drop_triggers"`
+	NoDropNewTable  bool    `yaml:"no_drop_new_table"`
+	NoDropOldTable  bool    `yaml:"no_drop_old_table"`
 }
 
 type AlertConfig struct {
 	MetadataLockThresholdSeconds int `yaml:"metadata_lock_threshold_seconds"`
 }
 
-type Task struct {
-	Name      string   `yaml:"name"`
-	Queries   []string `yaml:"queries"`
-	Threshold *int64   `yaml:"threshold,omitempty"`
-}
-
 type Config struct {
-	Common CommonConfig
-	Tasks  []Task
-	DSN    string
+	Common  CommonConfig
+	Queries []string
+	DSN     string
 }
 
 func LoadConfig(commonConfigPath, tasksConfigPath string) (*Config, error) {
@@ -45,9 +43,9 @@ func LoadConfig(commonConfigPath, tasksConfigPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to load common config: %w", err)
 	}
 
-	tasks, err := loadTasksConfig(tasksConfigPath)
+	queries, err := loadQueriesConfig(tasksConfigPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load tasks config: %w", err)
+		return nil, fmt.Errorf("failed to load queries config: %w", err)
 	}
 
 	dsn := os.Getenv("DATABASE_DSN")
@@ -56,9 +54,9 @@ func LoadConfig(commonConfigPath, tasksConfigPath string) (*Config, error) {
 	}
 
 	return &Config{
-		Common: *common,
-		Tasks:  tasks,
-		DSN:    dsn,
+		Common:  *common,
+		Queries: queries,
+		DSN:     dsn,
 	}, nil
 }
 
@@ -76,32 +74,26 @@ func loadCommonConfig(path string) (*CommonConfig, error) {
 	return &config, nil
 }
 
-func loadTasksConfig(path string) ([]Task, error) {
+func loadQueriesConfig(path string) ([]string, error) {
 	data, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file [%s]: %w", path, err)
 	}
 
-	var tasks []Task
-	if err := yaml.Unmarshal(data, &tasks); err != nil {
+	var queries []string
+	if err := yaml.Unmarshal(data, &queries); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML [%s]: %w", path, err)
 	}
 
-	if len(tasks) == 0 {
-		return nil, fmt.Errorf("no tasks defined in [%s]", path)
+	if len(queries) == 0 {
+		return nil, fmt.Errorf("no queries defined in [%s]", path)
 	}
 
-	for i, task := range tasks {
-		if task.Name == "" {
-			return nil, fmt.Errorf("task name is empty [index: %d]", i)
-		}
-		if len(task.Queries) == 0 {
-			return nil, fmt.Errorf("queries are empty [task: %s]", task.Name)
-		}
-		if task.Threshold != nil && *task.Threshold <= 0 {
-			return nil, fmt.Errorf("invalid threshold [task: %s, threshold: %d]", task.Name, *task.Threshold)
+	for i, query := range queries {
+		if strings.TrimSpace(query) == "" {
+			return nil, fmt.Errorf("query is empty [index: %d]", i)
 		}
 	}
 
-	return tasks, nil
+	return queries, nil
 }

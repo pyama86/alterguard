@@ -1,12 +1,12 @@
 pt_osc:
   charset: utf8mb4
-  no_swap_tables: false
+  no_swap_tables: true
   chunk_size: 1000
   max_lag: 1.5
   statistics: true
-  dry_run: false
+  no_drop_new_table: true
+  no_drop_triggers: true
 
-pt_osc_threshold: 1000000
-
+pt_osc_threshold: 1000
 alert:
   metadata_lock_threshold_seconds: 30

@@ -39,7 +39,7 @@ func runTasks() error {
 		return fmt.Errorf("configuration load failed: %w", err)
 	}
 
-	logger.Infof("Loaded configuration with %d tasks", len(cfg.Tasks))
+	logger.Infof("Loaded configuration with %d queries", len(cfg.Queries))
 
 	// Initialize database client
 	dbClient, err := database.NewMySQLClient(cfg.DSN)

@@ -1,46 +1,15 @@
-- name: "Add index to small table"
-  queries:
-    - "ALTER TABLE small_table ADD INDEX idx_name (name)"
-  threshold: 1000
-
-- name: "Add column to large table"
-  queries:
-    - "ALTER TABLE large_table ADD COLUMN discount_rate DECIMAL(5,2) DEFAULT 0.00"
-  threshold: 1000
-
-- name: "Modify column in large table"
-  queries:
-    - "ALTER TABLE large_table MODIFY COLUMN description TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-  threshold: 1000
-
-- name: "Add index to data types table"
-  queries:
-    - "ALTER TABLE data_types_table ADD INDEX idx_varchar_col (varchar_col)"
-  threshold: 100
-
-- name: "Create new tables"
-  queries:
-    - "CREATE TABLE `user_sessions` (
-      `id` int unsigned NOT NULL AUTO_INCREMENT,
-      `user_id` int unsigned NOT NULL,
-      `session_token` varchar(255) NOT NULL,
-      `expires_at` datetime NOT NULL,
-      `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (`id`),
-      UNIQUE KEY `idx_session_token` (`session_token`),
-      INDEX `idx_user_sessions_user_id` (`user_id`),
-      INDEX `idx_user_sessions_expires_at` (`expires_at`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    - "CREATE TABLE `cache_entries` (
-      `cache_key` varchar(255) NOT NULL,
-      `cache_value` longtext,
-      `expires_at` datetime DEFAULT NULL,
-      `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (`cache_key`),
-      INDEX `idx_cache_expires_at` (`expires_at`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-
-- name: "Drop old tables"
-  queries:
-    - "DROP TABLE IF EXISTS old_log_table"
-    - "DROP TABLE IF EXISTS deprecated_stats"
+- "CREATE TABLE `test_table` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) NOT NULL,
+  `email` varchar(255) NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_test_table_email` (`email`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+- "ALTER TABLE `test_table` ADD COLUMN `status` varchar(20) DEFAULT 'active'"
+- "ALTER TABLE `test_table` ADD INDEX `idx_test_table_status` (`status`)"
+- "DROP TABLE IF EXISTS `old_test_table`"
+- "ALTER TABLE small_table ADD INDEX idx_name (name)"
+- "ALTER TABLE small_table ADD COLUMN discount_rate DECIMAL(5,2) DEFAULT 0.00"
+- "ALTER TABLE large_table ADD COLUMN discount_rate DECIMAL(5,2) DEFAULT 0.00"
+- "ALTER TABLE large_table MODIFY COLUMN description TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"

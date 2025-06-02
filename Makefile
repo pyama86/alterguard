@@ -79,8 +79,7 @@ run-example:
 # Docker environment commands
 docker-up:
 	@echo "Starting Docker environment..."
-	docker-compose build
-	docker-compose up -d
+	docker-compose up -d --build --pull=never
 	@echo "Waiting for MySQL to be ready..."
 	docker-compose exec mysql mysqladmin ping -h localhost --silent
 	@echo "Docker environment is ready!"
@@ -93,12 +92,22 @@ docker-logs:
 	@echo "Showing Docker logs..."
 	docker-compose logs -f
 
-run-docker-all: docker-down docker-up run-docker
+run-docker-all: docker-down docker-up run-docker-exec run-docker-swap run-docker-cleanup
 
 # Run alterguard in Docker environment
-run-docker: docker-up
+run-docker-exec: docker-up
 	@echo "Running alterguard in Docker environment..."
 	docker-compose exec alterguard /app/alterguard run --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
+
+# Run alterguard swap in Docker environment
+run-docker-swap: docker-up
+	@echo "Running alterguard swap in Docker environment..."
+	docker-compose exec alterguard /app/alterguard swap large_table --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
+
+# Run alsterguard cleanup in Docker environment
+run-docker-cleanup: docker-up
+	@echo "Running alterguard cleanup in Docker environment..."
+	docker-compose exec alterguard /app/alterguard cleanup large_table --drop-table --drop-triggers --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
 
 # Run pt-osc directly in Docker environment
 run-pt-osc-docker:
