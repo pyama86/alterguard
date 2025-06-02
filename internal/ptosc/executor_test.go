@@ -9,32 +9,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildArgs(t *testing.T) {
+func TestBuildArgsWithPassword(t *testing.T) {
 	logger := logrus.New()
 	executor := NewPtOscExecutor(logger)
 
-	threshold1 := int64(1000000)
-	threshold2 := int64(500000)
-	threshold3 := int64(100000)
-
 	tests := []struct {
-		name         string
-		task         config.Task
-		ptOscConfig  config.PtOscConfig
-		dsn          string
-		forceDryRun  bool
-		expectedArgs []string
+		name             string
+		tableName        string
+		alterStatement   string
+		ptOscConfig      config.PtOscConfig
+		dsn              string
+		forceDryRun      bool
+		expectedArgs     []string
+		expectedPassword string
 	}{
 		{
-			name: "basic configuration",
-			task: config.Task{
-				Name:      "add_column",
-				Queries:   []string{"ALTER TABLE users ADD COLUMN foo INT"},
-				Threshold: &threshold1,
-			},
+			name:           "basic configuration",
+			tableName:      "users",
+			alterStatement: "ADD COLUMN foo INT",
 			ptOscConfig: config.PtOscConfig{
 				Charset:         "utf8mb4",
-				RecursionMethod: "dsn=D=<db>,t=dsns",
+				RecursionMethod: "dsn",
 				NoSwapTables:    true,
 				ChunkSize:       1000,
 				MaxLag:          1.5,
@@ -46,7 +41,8 @@ func TestBuildArgs(t *testing.T) {
 			expectedArgs: []string{
 				"--alter=ADD COLUMN foo INT",
 				"--charset=utf8mb4",
-				"--recursion-method=dsn=D=testdb,t=dsns",
+				"--recursion-method=dsn",
+				"--recursion-dsn=h=localhost,P=3306,D=testdb,t=users,u=user",
 				"--ask-pass",
 				"--no-swap-tables",
 				"--chunk-size=1000",
@@ -55,14 +51,12 @@ func TestBuildArgs(t *testing.T) {
 				"--execute",
 				"h=localhost,P=3306,D=testdb,t=users,u=user",
 			},
+			expectedPassword: "pass",
 		},
 		{
-			name: "force dry run",
-			task: config.Task{
-				Name:      "drop_index",
-				Queries:   []string{"ALTER TABLE orders DROP INDEX ix_old"},
-				Threshold: &threshold2,
-			},
+			name:           "force dry run",
+			tableName:      "orders",
+			alterStatement: "DROP INDEX ix_old",
 			ptOscConfig: config.PtOscConfig{
 				DryRun: false,
 			},
@@ -74,14 +68,12 @@ func TestBuildArgs(t *testing.T) {
 				"--dry-run",
 				"h=localhost,P=3306,D=testdb,t=orders,u=user",
 			},
+			expectedPassword: "pass",
 		},
 		{
-			name: "config dry run",
-			task: config.Task{
-				Name:      "modify_column",
-				Queries:   []string{"ALTER TABLE products MODIFY COLUMN price DECIMAL(10,2)"},
-				Threshold: &threshold3,
-			},
+			name:           "config dry run",
+			tableName:      "products",
+			alterStatement: "MODIFY COLUMN price DECIMAL(10,2)",
 			ptOscConfig: config.PtOscConfig{
 				DryRun: true,
 			},
@@ -93,14 +85,30 @@ func TestBuildArgs(t *testing.T) {
 				"--dry-run",
 				"h=localhost,P=3306,D=testdb,t=products,u=user",
 			},
+			expectedPassword: "pass",
+		},
+		{
+			name:           "no password",
+			tableName:      "users",
+			alterStatement: "ADD COLUMN bar VARCHAR(255)",
+			ptOscConfig:    config.PtOscConfig{},
+			dsn:            "user@tcp(localhost:3306)/testdb",
+			forceDryRun:    false,
+			expectedArgs: []string{
+				"--alter=ADD COLUMN bar VARCHAR(255)",
+				"--execute",
+				"h=localhost,P=3306,D=testdb,t=users,u=user",
+			},
+			expectedPassword: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			args, _, err := executor.BuildArgsWithPassword(tt.task, tt.ptOscConfig, tt.dsn, tt.forceDryRun)
+			args, password, err := executor.BuildArgsWithPassword(tt.tableName, tt.alterStatement, tt.ptOscConfig, tt.dsn, tt.forceDryRun)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectedArgs, args)
+			assert.Equal(t, tt.expectedPassword, password)
 		})
 	}
 }
@@ -115,14 +123,28 @@ func TestParseDSN(t *testing.T) {
 		expectedHost     string
 		expectedPort     string
 		expectedDatabase string
+		expectedUser     string
+		expectedPassword string
 		expectError      bool
 	}{
 		{
-			name:             "valid DSN",
+			name:             "valid DSN with password",
 			dsn:              "user:pass@tcp(localhost:3306)/testdb",
 			expectedHost:     "localhost",
 			expectedPort:     "3306",
 			expectedDatabase: "testdb",
+			expectedUser:     "user",
+			expectedPassword: "pass",
+			expectError:      false,
+		},
+		{
+			name:             "valid DSN without password",
+			dsn:              "user@tcp(localhost:3306)/testdb",
+			expectedHost:     "localhost",
+			expectedPort:     "3306",
+			expectedDatabase: "testdb",
+			expectedUser:     "user",
+			expectedPassword: "",
 			expectError:      false,
 		},
 		{
@@ -131,6 +153,8 @@ func TestParseDSN(t *testing.T) {
 			expectedHost:     "192.168.1.100",
 			expectedPort:     "3306",
 			expectedDatabase: "mydb",
+			expectedUser:     "user",
+			expectedPassword: "pass",
 			expectError:      false,
 		},
 		{
@@ -162,7 +186,7 @@ func TestParseDSN(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			host, port, database, _, _, err := executor.ParseDSN(tt.dsn)
+			host, port, database, user, password, err := executor.ParseDSN(tt.dsn)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -171,6 +195,8 @@ func TestParseDSN(t *testing.T) {
 				assert.Equal(t, tt.expectedHost, host)
 				assert.Equal(t, tt.expectedPort, port)
 				assert.Equal(t, tt.expectedDatabase, database)
+				assert.Equal(t, tt.expectedUser, user)
+				assert.Equal(t, tt.expectedPassword, password)
 			}
 		})
 	}

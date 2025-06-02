@@ -45,8 +45,8 @@ type MockPtOscExecutor struct {
 	mock.Mock
 }
 
-func (m *MockPtOscExecutor) Execute(task config.Task, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) error {
-	args := m.Called(task, ptOscConfig, dsn, forceDryRun)
+func (m *MockPtOscExecutor) ExecuteAlter(tableName, alterStatement string, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) error {
+	args := m.Called(tableName, alterStatement, ptOscConfig, dsn, forceDryRun)
 	return args.Error(0)
 }
 
@@ -75,22 +75,19 @@ func (m *MockSlackNotifier) NotifyWarning(taskName, tableName string, message st
 }
 
 func TestExecuteAllTasks(t *testing.T) {
-	threshold1000 := int64(1000)
-	threshold2000 := int64(2000)
-
 	tests := []struct {
 		name           string
-		tasks          []config.Task
+		queries        []string
 		rowCounts      map[string]int64
 		expectError    bool
 		expectedMethod string
-		initMock       func([]config.Task, map[string]int64, *MockDBClient, *MockPtOscExecutor, *MockSlackNotifier)
+		initMock       func([]string, map[string]int64, *MockDBClient, *MockPtOscExecutor, *MockSlackNotifier)
 	}{
 		{
-			name: "all small tasks",
-			tasks: []config.Task{
-				{Name: "task1", Queries: []string{"ALTER TABLE table1 ADD COLUMN foo INT"}, Threshold: &threshold1000},
-				{Name: "task2", Queries: []string{"ALTER TABLE table2 ADD COLUMN bar INT"}, Threshold: &threshold1000},
+			name: "all small queries",
+			queries: []string{
+				"ALTER TABLE table1 ADD COLUMN foo INT",
+				"ALTER TABLE table2 ADD COLUMN bar INT",
 			},
 			rowCounts: map[string]int64{
 				"table1": 500,
@@ -98,24 +95,20 @@ func TestExecuteAllTasks(t *testing.T) {
 			},
 			expectError:    false,
 			expectedMethod: "ALTER",
-			initMock: func(tasks []config.Task, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
+			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
 				}
-
-				for _, task := range tasks {
-					for _, query := range task.Queries {
-						d.On("ExecuteAlter", query).Return(nil)
-					}
+				for _, query := range queries {
+					d.On("ExecuteAlter", query).Return(nil)
 				}
-
 			},
 		},
 		{
-			name: "one large task",
-			tasks: []config.Task{
-				{Name: "task1", Queries: []string{"ALTER TABLE table1 ADD COLUMN foo INT"}, Threshold: &threshold1000},
-				{Name: "task2", Queries: []string{"ALTER TABLE table2 ADD COLUMN bar INT"}, Threshold: &threshold1000},
+			name: "one large table",
+			queries: []string{
+				"ALTER TABLE table1 ADD COLUMN foo INT",
+				"ALTER TABLE table2 ADD COLUMN bar INT",
 			},
 			rowCounts: map[string]int64{
 				"table1": 500,
@@ -123,78 +116,51 @@ func TestExecuteAllTasks(t *testing.T) {
 			},
 			expectError:    false,
 			expectedMethod: "PT-OSC",
-			initMock: func(tasks []config.Task, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
-				m.On("NotifyStart", "task2", "table2", int64(2000)).Return(nil)
-				m.On("NotifySuccess", "task2", "table2", int64(2000), mock.Anything).Return(nil)
-				p.On(
-					"Execute",
-					config.Task{
-						Name:    "task2",
-						Queries: []string{"ALTER TABLE table2 ADD COLUMN bar INT"},
-					},
-					config.PtOscConfig{},
-					"test-dsn",
-					false).Return(nil)
+			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
 				}
+				d.On("ExecuteAlter", "ALTER TABLE table1 ADD COLUMN foo INT").Return(nil)
 
-				for _, task := range tasks {
-					if task.Name == "task2" {
-						continue
-					}
-					for _, query := range task.Queries {
-						d.On("ExecuteAlter", query).Return(nil)
-					}
-				}
-
+				m.On("NotifyStart", "large-alter", "table2", int64(2000)).Return(nil)
+				m.On("NotifySuccess", "large-alter", "table2", int64(2000), mock.Anything).Return(nil)
+				p.On("ExecuteAlter", "table2", "ADD COLUMN bar INT", config.PtOscConfig{}, "test-dsn", false).Return(nil)
 			},
 		},
 		{
-			name: "multiple queries in one task",
-			tasks: []config.Task{
-				{
-					Name: "migration_task",
-					Queries: []string{
-						"CREATE TABLE new_table (id INT PRIMARY KEY)",
-						"ALTER TABLE existing_table ADD COLUMN new_col INT",
-						"DROP TABLE old_table",
-					},
-					Threshold: &threshold2000,
-				},
+			name: "mixed queries",
+			queries: []string{
+				"CREATE TABLE new_table (id INT PRIMARY KEY)",
+				"ALTER TABLE existing_table ADD COLUMN new_col INT",
+				"DROP TABLE old_table",
 			},
 			rowCounts: map[string]int64{
 				"existing_table": 500,
 			},
 			expectError:    false,
 			expectedMethod: "MIXED",
-			initMock: func(tasks []config.Task, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
-
+			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
 				}
-
-				for _, task := range tasks {
-					for _, query := range task.Queries {
-						d.On("ExecuteAlter", query).Return(nil)
-					}
+				for _, query := range queries {
+					d.On("ExecuteAlter", query).Return(nil)
 				}
-
 			},
 		},
 		{
 			name: "dry run mode",
-			tasks: []config.Task{
-				{Name: "task1", Queries: []string{"CREATE TABLE test_table (id INT PRIMARY KEY)"}, Threshold: &threshold1000},
-				{Name: "task2", Queries: []string{"ALTER TABLE table2 ADD COLUMN bar INT"}, Threshold: &threshold1000},
-				{Name: "task3", Queries: []string{"DROP TABLE old_table"}, Threshold: &threshold1000},
+			queries: []string{
+				"CREATE TABLE test_table (id INT PRIMARY KEY)",
+				"ALTER TABLE table2 ADD COLUMN bar INT",
+				"DROP TABLE old_table",
 			},
 			rowCounts: map[string]int64{
 				"table2": 500,
 			},
 			expectError:    false,
 			expectedMethod: "DRY_RUN",
-			initMock: func(tasks []config.Task, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
+			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
 				}
@@ -211,11 +177,11 @@ func TestExecuteAllTasks(t *testing.T) {
 			mockPtOsc := &MockPtOscExecutor{}
 			mockSlack := &MockSlackNotifier{}
 			if tt.initMock != nil {
-				tt.initMock(tt.tasks, tt.rowCounts, mockDB, mockPtOsc, mockSlack)
+				tt.initMock(tt.queries, tt.rowCounts, mockDB, mockPtOsc, mockSlack)
 			}
 
 			cfg := &config.Config{
-				Tasks: tt.tasks,
+				Queries: tt.queries,
 				Common: config.CommonConfig{
 					PtOsc:          config.PtOscConfig{},
 					PtOscThreshold: 1000,
@@ -234,6 +200,8 @@ func TestExecuteAllTasks(t *testing.T) {
 			}
 
 			mockDB.AssertExpectations(t)
+			mockPtOsc.AssertExpectations(t)
+			mockSlack.AssertExpectations(t)
 		})
 	}
 }
@@ -296,7 +264,6 @@ func TestSwapTable(t *testing.T) {
 
 			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
 
-			// Setup mocks
 			if tt.lockCheckError != nil {
 				mockDB.On("CheckMetadataLock", tt.tableName, 30).Return(false, tt.lockCheckError)
 			} else {

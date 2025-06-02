@@ -11,13 +11,13 @@ import (
 
 func TestLoadConfig(t *testing.T) {
 	tests := []struct {
-		name          string
-		commonConfig  string
-		tasksConfig   string
-		dsnEnv        string
-		expectError   bool
-		expectedTasks int
-		expectedDSN   string
+		name            string
+		commonConfig    string
+		tasksConfig     string
+		dsnEnv          string
+		expectError     bool
+		expectedQueries int
+		expectedDSN     string
 	}{
 		{
 			name: "valid config",
@@ -35,51 +35,32 @@ alert:
   metadata_lock_threshold_seconds: 30
 `,
 			tasksConfig: `
-- name: add_column
-  queries:
-    - "ALTER TABLE users ADD COLUMN foo INT"
-  threshold: 1000000
-- name: drop_index
-  queries:
-    - "ALTER TABLE orders DROP INDEX ix_old"
+- "ALTER TABLE users ADD COLUMN foo INT"
+- "ALTER TABLE orders DROP INDEX ix_old"
 `,
-			dsnEnv:        "user:pass@tcp(localhost:3306)/test",
-			expectError:   false,
-			expectedTasks: 2,
-			expectedDSN:   "user:pass@tcp(localhost:3306)/test",
+			dsnEnv:          "user:pass@tcp(localhost:3306)/test",
+			expectError:     false,
+			expectedQueries: 2,
+			expectedDSN:     "user:pass@tcp(localhost:3306)/test",
 		},
 		{
 			name:         "missing DSN environment variable",
 			commonConfig: "pt_osc:\n  charset: utf8mb4\npt_osc_threshold: 1000000\nalert:\n  metadata_lock_threshold_seconds: 30",
-			tasksConfig:  "- name: test\n  queries:\n    - \"ALTER TABLE users ADD COLUMN foo INT\"",
+			tasksConfig:  "- \"ALTER TABLE users ADD COLUMN foo INT\"",
 			dsnEnv:       "",
 			expectError:  true,
 		},
 		{
-			name:         "empty tasks",
+			name:         "empty queries",
 			commonConfig: "pt_osc:\n  charset: utf8mb4\npt_osc_threshold: 1000000\nalert:\n  metadata_lock_threshold_seconds: 30",
-			tasksConfig:  "",
+			tasksConfig:  "[]",
 			dsnEnv:       "user:pass@tcp(localhost:3306)/test",
 			expectError:  true,
 		},
 		{
-			name:         "invalid task - missing name",
+			name:         "empty query string",
 			commonConfig: "pt_osc:\n  charset: utf8mb4\npt_osc_threshold: 1000000\nalert:\n  metadata_lock_threshold_seconds: 30",
-			tasksConfig:  "- queries:\n    - \"ALTER TABLE users ADD COLUMN foo INT\"",
-			dsnEnv:       "user:pass@tcp(localhost:3306)/test",
-			expectError:  true,
-		},
-		{
-			name:         "invalid task - empty queries",
-			commonConfig: "pt_osc:\n  charset: utf8mb4\npt_osc_threshold: 1000000\nalert:\n  metadata_lock_threshold_seconds: 30",
-			tasksConfig:  "- name: test\n  queries: []",
-			dsnEnv:       "user:pass@tcp(localhost:3306)/test",
-			expectError:  true,
-		},
-		{
-			name:         "invalid task - negative threshold",
-			commonConfig: "pt_osc:\n  charset: utf8mb4\npt_osc_threshold: 1000000\nalert:\n  metadata_lock_threshold_seconds: 30",
-			tasksConfig:  "- name: test\n  queries:\n    - \"ALTER TABLE users ADD COLUMN foo INT\"\n  threshold: -1",
+			tasksConfig:  "- \"\"",
 			dsnEnv:       "user:pass@tcp(localhost:3306)/test",
 			expectError:  true,
 		},
@@ -109,7 +90,7 @@ alert:
 			} else {
 				require.NoError(t, err)
 				require.NotNil(t, config)
-				assert.Equal(t, tt.expectedTasks, len(config.Tasks))
+				assert.Equal(t, tt.expectedQueries, len(config.Queries))
 				assert.Equal(t, tt.expectedDSN, config.DSN)
 				assert.Equal(t, "utf8mb4", config.Common.PtOsc.Charset)
 				assert.Equal(t, int64(1000000), config.Common.PtOscThreshold)
@@ -168,30 +149,25 @@ alert:
 	}
 }
 
-func TestLoadTasksConfig(t *testing.T) {
+func TestLoadQueriesConfig(t *testing.T) {
 	tests := []struct {
-		name        string
-		content     string
-		expectError bool
-		expectTasks int
+		name          string
+		content       string
+		expectError   bool
+		expectedCount int
 	}{
 		{
-			name: "valid tasks",
+			name: "valid queries",
 			content: `
-- name: add_column
-  queries:
-    - "ALTER TABLE users ADD COLUMN foo INT"
-  threshold: 1000000
-- name: drop_index
-  queries:
-    - "ALTER TABLE orders DROP INDEX ix_old"
+- "ALTER TABLE users ADD COLUMN foo INT"
+- "ALTER TABLE orders DROP INDEX ix_old"
 `,
-			expectError: false,
-			expectTasks: 2,
+			expectError:   false,
+			expectedCount: 2,
 		},
 		{
-			name:        "empty tasks",
-			content:     "",
+			name:        "empty queries",
+			content:     "[]",
 			expectError: true,
 		},
 		{
@@ -204,17 +180,17 @@ func TestLoadTasksConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
-			path := filepath.Join(tmpDir, "tasks.yaml")
+			path := filepath.Join(tmpDir, "queries.yaml")
 			require.NoError(t, os.WriteFile(path, []byte(tt.content), 0644))
 
-			tasks, err := loadTasksConfig(path)
+			queries, err := loadQueriesConfig(path)
 
 			if tt.expectError {
 				assert.Error(t, err)
-				assert.Nil(t, tasks)
+				assert.Nil(t, queries)
 			} else {
 				require.NoError(t, err)
-				assert.Len(t, tasks, tt.expectTasks)
+				assert.Len(t, queries, tt.expectedCount)
 			}
 		})
 	}
