@@ -51,6 +51,9 @@ deps:
 	@echo "Installing dependencies..."
 	go mod download
 	go mod tidy
+	which goreleaser &> /dev/null || \
+		{ echo "goreleaser not found, installing..."; \
+		  go install github.com/goreleaser/goreleaser/v2@latest; }
 
 # Update dependencies
 deps-update:
