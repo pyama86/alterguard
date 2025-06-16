@@ -72,7 +72,7 @@ func cleanupTable(tableName string) error {
 	slackNotifier, err := slack.NewSlackNotifier(logger)
 	if err != nil {
 		logger.Errorf("Failed to initialize Slack notifier: %v", err)
-		return fmt.Errorf("Slack notifier initialization failed: %w", err)
+		return fmt.Errorf("slack notifier initialization failed: %w", err)
 	}
 
 	logger.Info("Slack notifier initialized")

@@ -78,8 +78,6 @@ alert:
 
 			if tt.dsnEnv != "" {
 				t.Setenv("DATABASE_DSN", tt.dsnEnv)
-			} else {
-				os.Unsetenv("DATABASE_DSN")
 			}
 
 			config, err := LoadConfig(commonPath, tasksPath)
