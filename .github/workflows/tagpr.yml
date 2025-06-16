@@ -6,25 +6,18 @@ on:
     branches:
       - main
 
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-
 jobs:
   tagpr:
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
+      packages: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-
       - id: run-tagpr
         name: Run tagpr
         uses: Songmu/tagpr@main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
