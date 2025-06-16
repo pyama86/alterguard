@@ -14,6 +14,7 @@ type Client interface {
 	ExecuteAlter(alterStatement string) error
 	ExecuteAlterWithDryRun(alterStatement string, dryRun bool) error
 	CheckMetadataLock(table string, thresholdSeconds int) (bool, error)
+	SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error
 	Close() error
 }
 
@@ -102,6 +103,24 @@ func (c *MySQLClient) CheckMetadataLock(table string, thresholdSeconds int) (boo
 	}
 
 	return true, nil
+}
+
+func (c *MySQLClient) SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error {
+	if lockWaitTimeout > 0 {
+		query := fmt.Sprintf("SET SESSION lock_wait_timeout = %d", lockWaitTimeout)
+		if _, err := c.db.Exec(query); err != nil {
+			return fmt.Errorf("failed to set lock_wait_timeout: %w", err)
+		}
+	}
+
+	if innodbLockWaitTimeout > 0 {
+		query := fmt.Sprintf("SET SESSION innodb_lock_wait_timeout = %d", innodbLockWaitTimeout)
+		if _, err := c.db.Exec(query); err != nil {
+			return fmt.Errorf("failed to set innodb_lock_wait_timeout: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (c *MySQLClient) Close() error {

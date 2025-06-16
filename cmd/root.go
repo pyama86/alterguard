@@ -41,7 +41,7 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&commonConfigPath, "common-config", "", "Path to common configuration file (required)")
-	rootCmd.PersistentFlags().StringVar(&tasksConfigPath, "tasks-config", "", "Path to tasks configuration file (required)")
+	rootCmd.PersistentFlags().StringVar(&tasksConfigPath, "tasks-config", "", "Path to tasks configuration file (required unless --stdin is used)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Force pt-osc to run in dry-run mode")
 
 	if err := rootCmd.MarkPersistentFlagRequired("common-config"); err != nil {

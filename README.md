@@ -12,6 +12,7 @@ alterguard is a tool for safely and efficiently executing MySQL schema changes. 
 - **Slack Notifications**: Sends execution status notifications to Slack
 - **Kubernetes Ready**: Optimized for Kubernetes Job execution
 - **Dry Run Mode**: Safe test execution
+- **Stdin Support**: Read queries from standard input
 - **Strict Error Handling**: Immediate stop on error occurrence
 
 ## Installation
@@ -53,66 +54,164 @@ pt_osc:
   max_lag: 1.5
   statistics: true
   dry_run: false
+  no_drop_triggers: false
+  no_drop_new_table: false
+  no_drop_old_table: false
+
+pt_osc_threshold: 1000000
 
 alert:
   metadata_lock_threshold_seconds: 30
+
+session_config:
+  lock_wait_timeout: 10
+  innodb_lock_wait_timeout: 10
 ```
 
 #### Task Definition (`tasks.yaml`)
 
 ```yaml
-- name: add_user_column
-  table: users
-  alter_statement: ADD COLUMN foo INT
-  threshold: 1000000
+- "CREATE TABLE `user_profiles` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `user_id` int unsigned NOT NULL,
+  `profile_data` json DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_user_profiles_user_id` (`user_id`),
+  INDEX `idx_user_profiles_updated_at` (`updated_at`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 
-- name: drop_old_index
-  table: orders
-  alter_statement: DROP INDEX ix_old
-  threshold: 500000
+- "ALTER TABLE users ADD COLUMN status VARCHAR(20) DEFAULT 'active'"
+
+- "ALTER TABLE orders DROP INDEX ix_legacy_status"
+
+- "ALTER TABLE products MODIFY COLUMN price DECIMAL(10,2) NOT NULL"
+
+- "DROP TABLE IF EXISTS old_user_sessions"
 ```
+
+### Configuration Options
+
+#### pt_osc Section
+
+| Option              | Type    | Default | Description                                 |
+| ------------------- | ------- | ------- | ------------------------------------------- |
+| `charset`           | string  | utf8mb4 | Character set for pt-online-schema-change   |
+| `recursion_method`  | string  | -       | Replication lag detection method            |
+| `no_swap_tables`    | bool    | true    | Skip table swapping (manual swap required)  |
+| `chunk_size`        | int     | 1000    | Number of rows to process per chunk         |
+| `max_lag`           | float64 | 1.5     | Maximum replication lag threshold (seconds) |
+| `statistics`        | bool    | true    | Enable statistics collection                |
+| `dry_run`           | bool    | false   | Run in dry-run mode                         |
+| `no_drop_triggers`  | bool    | false   | Do not drop triggers after completion       |
+| `no_drop_new_table` | bool    | false   | Do not drop new table on failure            |
+| `no_drop_old_table` | bool    | false   | Do not drop old table after swap            |
+
+#### Global Settings
+
+| Option             | Type  | Default | Description                          |
+| ------------------ | ----- | ------- | ------------------------------------ |
+| `pt_osc_threshold` | int64 | -       | Row count threshold for using pt-osc |
+
+#### Alert Section
+
+| Option                            | Type | Default | Description                               |
+| --------------------------------- | ---- | ------- | ----------------------------------------- |
+| `metadata_lock_threshold_seconds` | int  | 30      | Metadata lock warning threshold (seconds) |
+
+#### Session Config Section
+
+| Option                     | Type | Default | Description                                      |
+| -------------------------- | ---- | ------- | ------------------------------------------------ |
+| `lock_wait_timeout`        | int  | 10      | MySQL lock_wait_timeout setting (seconds)        |
+| `innodb_lock_wait_timeout` | int  | 10      | MySQL innodb_lock_wait_timeout setting (seconds) |
 
 ## Usage
 
 ### Basic Usage
 
 ```bash
-# Execute all tasks
+# Execute all tasks from file
 ./alterguard run --common-config config-common.yaml --tasks-config tasks.yaml
 
 # Execute in dry-run mode
 ./alterguard run --common-config config-common.yaml --tasks-config tasks.yaml --dry-run
 
+# Read queries from stdin
+./alterguard run --common-config config-common.yaml --stdin
+
+# Combine file and stdin input
+./alterguard run --common-config config-common.yaml --tasks-config tasks.yaml --stdin
+
 # Swap tables
 ./alterguard swap users --common-config config-common.yaml --tasks-config tasks.yaml
 
-# Cleanup
+# Cleanup operations
 ./alterguard cleanup users --drop-table --common-config config-common.yaml --tasks-config tasks.yaml
 ./alterguard cleanup users --drop-triggers --common-config config-common.yaml --tasks-config tasks.yaml
+./alterguard cleanup users --drop-table --drop-triggers --common-config config-common.yaml --tasks-config tasks.yaml
 ```
 
 ### Subcommands
 
 #### `run`
 
-Executes all tasks sequentially. Tables with row count ≤ threshold are processed with ALTER TABLE, while tables exceeding the threshold are processed with pt-online-schema-change.
+Executes all tasks sequentially. Tables with row count ≤ `pt_osc_threshold` are processed with ALTER TABLE, while tables exceeding the threshold are processed with pt-online-schema-change.
 
-#### `swap`
+**Options:**
+
+- `--stdin`: Read queries from standard input
+- `--dry-run`: Force pt-osc to run in dry-run mode
+
+#### `swap [table_name]`
 
 Swaps the backup table created by pt-online-schema-change with the original table.
 
-#### `cleanup`
+Performs RENAME TABLE operations:
 
-- `--drop-table`: Drops backup table (`table_name_old`)
-- `--drop-triggers`: Drops triggers created by pt-osc
+- `original_table` → `original_table_old`
+- `_original_table_new` → `original_table`
+
+#### `cleanup [table_name]`
+
+Cleans up resources created by pt-online-schema-change.
+
+**Options:**
+
+- `--drop-table`: Drop backup table (`table_name_old`)
+- `--drop-triggers`: Drop triggers created by pt-osc (`pt_osc_table_name_*`)
+
+At least one cleanup operation must be specified.
+
+### Using Standard Input
+
+You can provide SQL queries via standard input:
+
+```bash
+# From pipe
+echo "ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT FALSE;" | ./alterguard run --common-config config-common.yaml --stdin
+
+# From file
+cat migration.sql | ./alterguard run --common-config config-common.yaml --stdin
+
+# Interactive input (terminate with Ctrl+D)
+./alterguard run --common-config config-common.yaml --stdin
+```
+
+Queries from stdin should be terminated with semicolons. Multi-line queries are supported.
 
 ## Execution Flow
 
 1. **Configuration Loading**: Loads settings from YAML configuration files and environment variables
-2. **Table Classification**: Gets row count for each table and classifies by threshold
-3. **Small Table Processing**: Processes tables ≤ threshold with ALTER TABLE
-4. **Large Table Processing**: Processes tables > threshold with pt-osc (only if single table)
-5. **Error Handling**: Stops with error if multiple large tables exist
+2. **Query Collection**: Loads queries from tasks file and/or stdin
+3. **Database Connection**: Establishes connection using DATABASE_DSN
+4. **Table Analysis**: For ALTER TABLE statements, gets row count and compares with `pt_osc_threshold`
+5. **Method Selection**:
+   - Row count ≤ threshold: Direct ALTER TABLE execution
+   - Row count > threshold: pt-online-schema-change execution
+6. **Execution**: Processes all queries sequentially
+7. **Error Handling**: Stops immediately on any error to prevent data corruption
 
 ## Kubernetes Usage
 
@@ -172,14 +271,20 @@ data:
       max_lag: 1.5
       statistics: true
       dry_run: false
+
+    pt_osc_threshold: 1000000
+
     alert:
       metadata_lock_threshold_seconds: 30
 
+    session_config:
+      lock_wait_timeout: 10
+      innodb_lock_wait_timeout: 10
+
   tasks.yaml: |
-    - name: add_user_column
-      table: users
-      alter_statement: ADD COLUMN foo INT
-      threshold: 1000000
+    - "ALTER TABLE users ADD COLUMN status VARCHAR(20) DEFAULT 'active'"
+    - "ALTER TABLE orders DROP INDEX ix_legacy_status"
+    - "DROP TABLE IF EXISTS old_user_sessions"
 ```
 
 ## Slack Notifications
@@ -195,15 +300,14 @@ alterguard sends Slack notifications at the following times:
 
 ```
 🚀 Schema change started
-Task: add_user_column
-Table: users
+Query: ALTER TABLE users ADD COLUMN status VARCHAR(20) DEFAULT 'active'
 Row count: 500000
 
 ✅ Schema change completed successfully
-Task: add_user_column
-Table: users
+Query: ALTER TABLE users ADD COLUMN status VARCHAR(20) DEFAULT 'active'
 Row count: 500000
 Duration: 2m30s
+Method: ALTER TABLE
 ```
 
 ## Testing
@@ -223,7 +327,7 @@ go test ./internal/config
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.24+
 - MySQL 5.7+ or 8.0+
 - pt-online-schema-change (Percona Toolkit)
 
@@ -240,8 +344,11 @@ go build -o alterguard .
 echo "DATABASE_DSN=user:pass@tcp(localhost:3306)/testdb" > .env
 echo "SLACK_WEBHOOK_URL=https://hooks.slack.com/services/..." >> .env
 
-# Run
+# Run with file input
 ./alterguard run --common-config examples/config-common.yaml --tasks-config examples/tasks.yaml
+
+# Run with stdin input
+echo "ALTER TABLE test ADD COLUMN new_col INT;" | ./alterguard run --common-config examples/config-common.yaml --stdin
 ```
 
 ## License
@@ -259,3 +366,6 @@ Pull requests and issue reports are welcome.
 - Large table changes may take considerable time
 - Metadata locks may occur, so set appropriate maintenance windows
 - The tool stops immediately on any error to prevent data corruption
+- When using `--stdin`, queries must be terminated with semicolons
+- The `pt_osc_threshold` setting determines when to use pt-online-schema-change vs direct ALTER TABLE
+- Session timeout settings help prevent long-running locks during schema changes

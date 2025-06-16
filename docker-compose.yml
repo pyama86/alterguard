@@ -8,7 +8,7 @@ services:
       MYSQL_USER: testuser
       MYSQL_PASSWORD: testpassword
     ports:
-      - "3306:3306"
+      - "13306:3306"
     volumes:
       - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
@@ -30,22 +30,5 @@ services:
     command: tail -f /dev/null
     environment:
       DATABASE_DSN: "testuser:testpassword@tcp(mysql:3306)/testdb"
-
-  alterguard:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: alterguard-app
-    depends_on:
-      mysql:
-        condition: service_healthy
-    volumes:
-      - .:/workspace
-    working_dir: /workspace
-    environment:
-      DATABASE_DSN: "testuser:testpassword@tcp(mysql:3306)/testdb"
-      DEBUG: "true"
-    command: tail -f /dev/null
-
 volumes:
   mysql_data:

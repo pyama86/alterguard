@@ -11,6 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	useStdin bool
+)
+
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Execute all schema change tasks",
@@ -19,21 +23,45 @@ var runCmd = &cobra.Command{
 Tasks with row count <= threshold will be executed using ALTER TABLE.
 Tasks with row count > threshold will be executed using pt-online-schema-change.
 
-If multiple tasks exceed the threshold, the command will fail with an error.`,
+If multiple tasks exceed the threshold, the command will fail with an error.
+
+Use --stdin flag to read queries from standard input instead of or in addition to the tasks file.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTasks()
 	},
 }
 
 func init() {
+	runCmd.Flags().BoolVar(&useStdin, "stdin", false, "Read queries from standard input")
 	rootCmd.AddCommand(runCmd)
+}
+
+func validateFlags() error {
+	if !useStdin && tasksConfigPath == "" {
+		return fmt.Errorf("either --tasks-config or --stdin must be specified")
+	}
+	return nil
 }
 
 func runTasks() error {
 	logger.Info("Starting alterguard run command")
 
+	// Validate flags
+	if err := validateFlags(); err != nil {
+		logger.Errorf("Flag validation failed: %v", err)
+		return err
+	}
+
 	// Load configuration
-	cfg, err := config.LoadConfig(commonConfigPath, tasksConfigPath)
+	var cfg *config.Config
+	var err error
+
+	if useStdin {
+		cfg, err = config.LoadConfigWithStdin(commonConfigPath, tasksConfigPath, useStdin)
+	} else {
+		cfg, err = config.LoadConfig(commonConfigPath, tasksConfigPath)
+	}
+
 	if err != nil {
 		logger.Errorf("Failed to load configuration: %v", err)
 		return fmt.Errorf("configuration load failed: %w", err)

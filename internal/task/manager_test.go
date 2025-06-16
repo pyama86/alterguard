@@ -36,6 +36,11 @@ func (m *MockDBClient) CheckMetadataLock(table string, thresholdSeconds int) (bo
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockDBClient) SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error {
+	args := m.Called(lockWaitTimeout, innodbLockWaitTimeout)
+	return args.Error(0)
+}
+
 func (m *MockDBClient) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -259,10 +264,16 @@ func TestSwapTable(t *testing.T) {
 					Alert: config.AlertConfig{
 						MetadataLockThresholdSeconds: 30,
 					},
+					SessionConfig: config.SessionConfig{
+						LockWaitTimeout:       0,
+						InnodbLockWaitTimeout: 0,
+					},
 				},
 			}
 
 			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+
+			mockDB.On("SetSessionConfig", 0, 0).Return(nil)
 
 			if tt.lockCheckError != nil {
 				mockDB.On("CheckMetadataLock", tt.tableName, 30).Return(false, tt.lockCheckError)

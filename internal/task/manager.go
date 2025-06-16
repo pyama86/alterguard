@@ -69,6 +69,7 @@ func (m *Manager) ExecuteAllTasks() error {
 		}
 	}
 
+	// テーブル指定がないクエリを実行する
 	for _, query := range queries {
 		if query.TableName == "" {
 			if err := m.executeQuery(&query, "non-table-query"); err != nil {
@@ -270,6 +271,11 @@ func (m *Manager) extractAlterStatement(query string) string {
 
 func (m *Manager) SwapTable(tableName string) error {
 	m.logger.Infof("Starting table swap for %s", tableName)
+
+	if err := m.db.SetSessionConfig(m.config.Common.SessionConfig.LockWaitTimeout, m.config.Common.SessionConfig.InnodbLockWaitTimeout); err != nil {
+		m.logger.Errorf("Failed to set session config: %v", err)
+		return fmt.Errorf("failed to set session config: %w", err)
+	}
 
 	lockDetected, err := m.db.CheckMetadataLock(tableName, m.config.Common.Alert.MetadataLockThresholdSeconds)
 	if err != nil {

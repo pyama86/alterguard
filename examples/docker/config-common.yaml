@@ -10,3 +10,7 @@ pt_osc:
 pt_osc_threshold: 1000
 alert:
   metadata_lock_threshold_seconds: 30
+
+session_config:
+  lock_wait_timeout: 10
+  innodb_lock_wait_timeout: 10
