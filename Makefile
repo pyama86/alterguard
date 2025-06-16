@@ -49,11 +49,11 @@ lint:
 # Install dependencies
 deps:
 	@echo "Installing dependencies..."
-	go mod download
-	go mod tidy
 	which goreleaser &> /dev/null || \
 		{ echo "goreleaser not found, installing..."; \
 		  go install github.com/goreleaser/goreleaser/v2@latest; }
+	go mod download
+	go mod tidy
 
 # Update dependencies
 deps-update:

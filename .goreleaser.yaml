@@ -60,48 +60,6 @@ changelog:
     - title: Others
       order: 999
 
-dockers:
-  - image_templates:
-      - "ghcr.io/pyama86/alterguard:{{ .Version }}-amd64"
-      - "ghcr.io/pyama86/alterguard:latest-amd64"
-    dockerfile: Dockerfile
-    use: buildx
-    build_flag_templates:
-      - "--pull"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source=https://github.com/pyama86/alterguard"
-      - "--platform=linux/amd64"
-    goarch: amd64
-
-  - image_templates:
-      - "ghcr.io/pyama86/alterguard:{{ .Version }}-arm64"
-      - "ghcr.io/pyama86/alterguard:latest-arm64"
-    dockerfile: Dockerfile
-    use: buildx
-    build_flag_templates:
-      - "--pull"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source=https://github.com/pyama86/alterguard"
-      - "--platform=linux/arm64"
-    goarch: arm64
-
-docker_manifests:
-  - name_template: "ghcr.io/pyama86/alterguard:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/pyama86/alterguard:{{ .Version }}-amd64"
-      - "ghcr.io/pyama86/alterguard:{{ .Version }}-arm64"
-
-  - name_template: "ghcr.io/pyama86/alterguard:latest"
-    image_templates:
-      - "ghcr.io/pyama86/alterguard:latest-amd64"
-      - "ghcr.io/pyama86/alterguard:latest-arm64"
-
 release:
   github:
     owner: pyama86
