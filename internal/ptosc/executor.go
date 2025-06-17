@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/pyama86/alterguard/internal/config"
 	"github.com/sirupsen/logrus"
@@ -17,7 +18,10 @@ type Executor interface {
 }
 
 type PtOscExecutor struct {
-	logger *logrus.Logger
+	logger        *logrus.Logger
+	hasError      bool
+	errorMessages []string
+	mutex         sync.Mutex
 }
 
 func NewPtOscExecutor(logger *logrus.Logger) *PtOscExecutor {
@@ -27,6 +31,11 @@ func NewPtOscExecutor(logger *logrus.Logger) *PtOscExecutor {
 }
 
 func (e *PtOscExecutor) ExecuteAlter(tableName, alterStatement string, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) error {
+	e.mutex.Lock()
+	e.hasError = false
+	e.errorMessages = []string{}
+	e.mutex.Unlock()
+
 	args, password, err := e.BuildArgsWithPassword(tableName, alterStatement, ptOscConfig, dsn, forceDryRun)
 	if err != nil {
 		return fmt.Errorf("failed to build pt-osc arguments: %w", err)
@@ -61,6 +70,13 @@ func (e *PtOscExecutor) ExecuteAlter(tableName, alterStatement string, ptOscConf
 		return fmt.Errorf("pt-online-schema-change failed for table %s: %w", tableName, err)
 	}
 
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	if e.hasError {
+		return fmt.Errorf("pt-online-schema-change detected errors for table %s: %s",
+			tableName, strings.Join(e.errorMessages, "; "))
+	}
+
 	e.logger.Infof("pt-online-schema-change completed successfully for table %s", tableName)
 	return nil
 }
@@ -69,12 +85,68 @@ func (e *PtOscExecutor) logOutput(r io.Reader, isError bool) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		if e.containsErrorPattern(line) {
+			e.mutex.Lock()
+			e.hasError = true
+			e.errorMessages = append(e.errorMessages, line)
+			e.mutex.Unlock()
+		}
+
 		if isError {
 			e.logger.Errorf("[pt-osc] %s", line)
 		} else {
 			e.logger.Infof("[pt-osc] %s", line)
 		}
 	}
+}
+
+func (e *PtOscExecutor) containsErrorPattern(line string) bool {
+	line = strings.ToLower(strings.TrimSpace(line))
+
+	errorPrefixes := []string{
+		"error:",
+		"fatal:",
+		"pt-online-schema-change: error",
+		"pt-online-schema-change: fatal",
+	}
+
+	for _, prefix := range errorPrefixes {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+
+	// https://perconadev.atlassian.net/issues/?jql=project%20%3D%20%22PT%22%20AND%20component%20%3D%20%22pt-online-schema-change%2
+	// 上記が対応されるまでの暫定対応
+	mysqlErrors := []string{
+		"you have an error in your sql syntax",
+		"unknown column",
+		"unknown table",
+		"duplicate column name",
+		"duplicate key name",
+		"doesn't exist",
+		"can't create table",
+		"can't drop table",
+		"can't add foreign key constraint",
+		"duplicate entry",
+		"column cannot be null",
+		"data too long for column",
+		"out of range value",
+		"access denied",
+		"connection refused",
+		"lost connection",
+		"cannot connect to mysql",
+		"operation failed",
+	}
+
+	for _, errMsg := range mysqlErrors {
+		if strings.Contains(line, errMsg) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (e *PtOscExecutor) BuildArgsWithPassword(

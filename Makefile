@@ -6,6 +6,12 @@ VERSION?=$(shell git describe --tags --always --dirty)
 LDFLAGS=-ldflags "-s -w -X github.com/pyama86/alterguard/cmd.version=${VERSION}"
 DOCKER_IMAGE=alterguard
 DOCKER_TAG?=latest
+DATABASE_DSN        ?= testuser:testpassword@tcp(127.0.0.1:13306)/testdb
+SLACK_WEBHOOK_URL   ?= https://example.com
+
+GORUN = DATABASE_DSN='$(DATABASE_DSN)' \
+        SLACK_WEBHOOK_URL='$(SLACK_WEBHOOK_URL)' \
+        go run .
 
 # Default target
 all: fmt vet test build
@@ -75,7 +81,7 @@ docker-push: docker-build
 run-example:
 	@echo "Running with example configuration..."
 	@echo "Note: Set DATABASE_DSN and SLACK_WEBHOOK_URL environment variables"
-	./alterguard run --common-config examples/config-common.yaml --tasks-config examples/tasks.yaml --dry-run
+	$(GORUN) run --common-config examples/config-common.yaml --tasks-config examples/tasks.yaml --dry-run
 
 # Docker environment commands
 docker-up:
@@ -93,22 +99,21 @@ docker-logs:
 	@echo "Showing Docker logs..."
 	docker-compose logs -f
 
-DATABASE_DSN="testuser:testpassword@tcp(127.0.0.1:13306)/testdb"
 run-docker-all: docker-down docker-up run-docker-exec run-docker-swap run-docker-cleanup
 # Run alterguard in Docker environment
 run-docker-exec: docker-up
 	@echo "Running alterguard in Docker environment..."
-	DATABASE_DSN=$(DATABASE_DSN) go run . run --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
+	$(GORUN) run --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
 
 # Run alterguard swap in Docker environment
 run-docker-swap: docker-up
 	@echo "Running alterguard swap in Docker environment..."
-	DATABASE_DSN=$(DATABASE_DSN) go run . swap large_table --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
+	$(GORUN) swap large_table --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
 
 # Run alsterguard cleanup in Docker environment
 run-docker-cleanup: docker-up
 	@echo "Running alterguard cleanup in Docker environment..."
-	DATABASE_DSN=$(DATABASE_DSN) go run . cleanup large_table --drop-table --drop-triggers --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
+	$(GORUN) cleanup large_table --drop-table --drop-triggers --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
 
 # Run pt-osc directly in Docker environment
 run-pt-osc-docker:

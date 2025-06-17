@@ -14,6 +14,9 @@ type Notifier interface {
 	NotifySuccess(taskName, tableName string, rowCount int64, duration time.Duration) error
 	NotifyFailure(taskName, tableName string, rowCount int64, err error) error
 	NotifyWarning(taskName, tableName string, message string) error
+	NotifyStartWithQuery(taskName, tableName, query string, rowCount int64) error
+	NotifySuccessWithQuery(taskName, tableName, query string, rowCount int64, duration time.Duration) error
+	NotifyFailureWithQuery(taskName, tableName, query string, rowCount int64, err error) error
 }
 
 type SlackNotifier struct {
@@ -62,6 +65,27 @@ func (n *SlackNotifier) NotifyWarning(taskName, tableName string, message string
 		taskName, tableName, message)
 
 	return n.sendMessage(msg, "warning")
+}
+
+func (n *SlackNotifier) NotifyStartWithQuery(taskName, tableName, query string, rowCount int64) error {
+	message := fmt.Sprintf("🚀 Schema change started\nTask: %s\nTable: %s\nRow count: %d\nQuery: %s",
+		taskName, tableName, rowCount, query)
+
+	return n.sendMessage(message, "good")
+}
+
+func (n *SlackNotifier) NotifySuccessWithQuery(taskName, tableName, query string, rowCount int64, duration time.Duration) error {
+	message := fmt.Sprintf("✅ Schema change completed successfully\nTask: %s\nTable: %s\nRow count: %d\nDuration: %s\nQuery: %s",
+		taskName, tableName, rowCount, duration.String(), query)
+
+	return n.sendMessage(message, "good")
+}
+
+func (n *SlackNotifier) NotifyFailureWithQuery(taskName, tableName, query string, rowCount int64, err error) error {
+	message := fmt.Sprintf("❌ Schema change failed\nTask: %s\nTable: %s\nRow count: %d\nError: %s\nQuery: %s",
+		taskName, tableName, rowCount, err.Error(), query)
+
+	return n.sendMessage(message, "danger")
 }
 
 func (n *SlackNotifier) sendMessage(text, color string) error {

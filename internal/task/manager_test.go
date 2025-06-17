@@ -2,6 +2,7 @@ package task
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -79,6 +80,21 @@ func (m *MockSlackNotifier) NotifyWarning(taskName, tableName string, message st
 	return args.Error(0)
 }
 
+func (m *MockSlackNotifier) NotifyStartWithQuery(taskName, tableName, query string, rowCount int64) error {
+	args := m.Called(taskName, tableName, query, rowCount)
+	return args.Error(0)
+}
+
+func (m *MockSlackNotifier) NotifySuccessWithQuery(taskName, tableName, query string, rowCount int64, duration time.Duration) error {
+	args := m.Called(taskName, tableName, query, rowCount, duration)
+	return args.Error(0)
+}
+
+func (m *MockSlackNotifier) NotifyFailureWithQuery(taskName, tableName, query string, rowCount int64, err error) error {
+	args := m.Called(taskName, tableName, query, rowCount, err)
+	return args.Error(0)
+}
+
 func TestExecuteAllTasks(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -103,6 +119,12 @@ func TestExecuteAllTasks(t *testing.T) {
 			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
+					combinedQuery := fmt.Sprintf("`ALTER TABLE %s ADD COLUMN foo INT`", tableName)
+					if tableName == "table2" {
+						combinedQuery = fmt.Sprintf("`ALTER TABLE %s ADD COLUMN bar INT`", tableName)
+					}
+					m.On("NotifyStartWithQuery", "alter-table", tableName, combinedQuery, rowCount).Return(nil)
+					m.On("NotifySuccessWithQuery", "alter-table", tableName, combinedQuery, rowCount, mock.Anything).Return(nil)
 				}
 				for _, query := range queries {
 					d.On("ExecuteAlter", query).Return(nil)
@@ -127,8 +149,14 @@ func TestExecuteAllTasks(t *testing.T) {
 				}
 				d.On("ExecuteAlter", "ALTER TABLE table1 ADD COLUMN foo INT").Return(nil)
 
-				m.On("NotifyStart", "large-alter", "table2", int64(2000)).Return(nil)
-				m.On("NotifySuccess", "large-alter", "table2", int64(2000), mock.Anything).Return(nil)
+				// table1 is small (500 rows), so it uses alter-table
+				m.On("NotifyStartWithQuery", "alter-table", "table1", "`ALTER TABLE table1 ADD COLUMN foo INT`", int64(500)).Return(nil)
+				m.On("NotifySuccessWithQuery", "alter-table", "table1", "`ALTER TABLE table1 ADD COLUMN foo INT`", int64(500), mock.Anything).Return(nil)
+
+				// table2 is large (2000 rows), so it uses pt-osc
+				largeAlterQuery := "ALTER: `ALTER TABLE table2 ADD COLUMN bar INT`\npt-osc: `pt-online-schema-change --alter='ADD COLUMN bar INT' --execute`"
+				m.On("NotifyStartWithQuery", "pt-osc", "table2", largeAlterQuery, int64(2000)).Return(nil)
+				m.On("NotifySuccessWithQuery", "pt-osc", "table2", largeAlterQuery, int64(2000), mock.Anything).Return(nil)
 				p.On("ExecuteAlter", "table2", "ADD COLUMN bar INT", config.PtOscConfig{}, "test-dsn", false).Return(nil)
 			},
 		},
@@ -147,7 +175,20 @@ func TestExecuteAllTasks(t *testing.T) {
 			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
+					m.On("NotifyStartWithQuery", "alter-table", tableName, "`ALTER TABLE existing_table ADD COLUMN new_col INT`", rowCount).Return(nil)
+					m.On("NotifySuccessWithQuery", "alter-table", tableName, "`ALTER TABLE existing_table ADD COLUMN new_col INT`", rowCount, mock.Anything).Return(nil)
 				}
+
+				// small-query (CREATE TABLE new_table)
+				d.On("GetTableRowCount", "new_table").Return(int64(0), errors.New("table not found"))
+				m.On("NotifyStartWithQuery", "small-query", "new_table", "`CREATE TABLE new_table (id INT PRIMARY KEY)`", int64(0)).Return(nil)
+				m.On("NotifySuccessWithQuery", "small-query", "new_table", "`CREATE TABLE new_table (id INT PRIMARY KEY)`", int64(0), mock.Anything).Return(nil)
+
+				// small-query (DROP TABLE old_table)
+				d.On("GetTableRowCount", "old_table").Return(int64(0), errors.New("table not found"))
+				m.On("NotifyStartWithQuery", "small-query", "old_table", "`DROP TABLE old_table`", int64(0)).Return(nil)
+				m.On("NotifySuccessWithQuery", "small-query", "old_table", "`DROP TABLE old_table`", int64(0), mock.Anything).Return(nil)
+
 				for _, query := range queries {
 					d.On("ExecuteAlter", query).Return(nil)
 				}
@@ -168,7 +209,18 @@ func TestExecuteAllTasks(t *testing.T) {
 			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
+					m.On("NotifyStartWithQuery", "alter-table (DRY RUN)", tableName, "`ALTER TABLE table2 ADD COLUMN bar INT`", rowCount).Return(nil)
+					m.On("NotifySuccessWithQuery", "alter-table (DRY RUN)", tableName, "`ALTER TABLE table2 ADD COLUMN bar INT`", rowCount, mock.Anything).Return(nil)
 				}
+				// CREATE TABLE test_table
+				d.On("GetTableRowCount", "test_table").Return(int64(0), errors.New("table not found"))
+				m.On("NotifyStartWithQuery", "small-query (DRY RUN)", "test_table", "`CREATE TABLE test_table (id INT PRIMARY KEY)`", int64(0)).Return(nil)
+				m.On("NotifySuccessWithQuery", "small-query (DRY RUN)", "test_table", "`CREATE TABLE test_table (id INT PRIMARY KEY)`", int64(0), mock.Anything).Return(nil)
+
+				// DROP TABLE old_table
+				d.On("GetTableRowCount", "old_table").Return(int64(0), errors.New("table not found"))
+				m.On("NotifyStartWithQuery", "small-query (DRY RUN)", "old_table", "`DROP TABLE old_table`", int64(0)).Return(nil)
+				m.On("NotifySuccessWithQuery", "small-query (DRY RUN)", "old_table", "`DROP TABLE old_table`", int64(0), mock.Anything).Return(nil)
 			},
 		},
 	}
@@ -248,6 +300,13 @@ func TestSwapTable(t *testing.T) {
 			swapError:    errors.New("swap failed"),
 			expectError:  true,
 		},
+		{
+			name:          "dry run mode",
+			tableName:     "test_table",
+			lockDetected:  false,
+			expectError:   false,
+			expectWarning: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -271,12 +330,21 @@ func TestSwapTable(t *testing.T) {
 				},
 			}
 
-			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+			isDryRun := tt.name == "dry run mode"
+			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, isDryRun)
+
+			expectedQuery := fmt.Sprintf("`RENAME TABLE %s TO %s_old, _%s_new TO %s`", tt.tableName, tt.tableName, tt.tableName, tt.tableName)
+			taskName := "swap"
+			if isDryRun {
+				taskName = "swap (DRY RUN)"
+			}
+			mockSlack.On("NotifyStartWithQuery", taskName, tt.tableName, expectedQuery, int64(0)).Return(nil)
 
 			mockDB.On("SetSessionConfig", 0, 0).Return(nil)
 
 			if tt.lockCheckError != nil {
 				mockDB.On("CheckMetadataLock", tt.tableName, 30).Return(false, tt.lockCheckError)
+				mockSlack.On("NotifyFailureWithQuery", taskName, tt.tableName, expectedQuery, int64(0), tt.lockCheckError).Return(nil)
 			} else {
 				mockDB.On("CheckMetadataLock", tt.tableName, 30).Return(tt.lockDetected, nil)
 
@@ -286,8 +354,12 @@ func TestSwapTable(t *testing.T) {
 
 				if tt.swapError != nil {
 					mockDB.On("ExecuteAlter", mock.AnythingOfType("string")).Return(tt.swapError)
+					mockSlack.On("NotifyFailureWithQuery", taskName, tt.tableName, expectedQuery, int64(0), tt.swapError).Return(nil)
 				} else {
-					mockDB.On("ExecuteAlter", mock.AnythingOfType("string")).Return(nil)
+					if !isDryRun {
+						mockDB.On("ExecuteAlter", mock.AnythingOfType("string")).Return(nil)
+					}
+					mockSlack.On("NotifySuccessWithQuery", taskName, tt.tableName, expectedQuery, int64(0), mock.Anything).Return(nil)
 				}
 			}
 
@@ -306,25 +378,56 @@ func TestSwapTable(t *testing.T) {
 }
 
 func TestCleanupTable(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.FatalLevel)
+	tests := []struct {
+		name      string
+		tableName string
+		dryRun    bool
+	}{
+		{
+			name:      "normal cleanup",
+			tableName: "test_table",
+			dryRun:    false,
+		},
+		{
+			name:      "dry run cleanup",
+			tableName: "test_table",
+			dryRun:    true,
+		},
+	}
 
-	mockDB := &MockDBClient{}
-	mockPtOsc := &MockPtOscExecutor{}
-	mockSlack := &MockSlackNotifier{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := logrus.New()
+			logger.SetLevel(logrus.FatalLevel)
 
-	cfg := &config.Config{}
-	manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+			mockDB := &MockDBClient{}
+			mockPtOsc := &MockPtOscExecutor{}
+			mockSlack := &MockSlackNotifier{}
 
-	tableName := "test_table"
-	expectedSQL := "DROP TABLE IF EXISTS test_table_old"
+			cfg := &config.Config{}
+			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, tt.dryRun)
 
-	mockDB.On("ExecuteAlter", expectedSQL).Return(nil)
+			expectedSQL := "DROP TABLE IF EXISTS test_table_old"
+			expectedQuery := "`DROP TABLE IF EXISTS test_table_old`"
+			taskName := "cleanup"
+			if tt.dryRun {
+				taskName = "cleanup (DRY RUN)"
+			}
 
-	err := manager.CleanupTable(tableName)
+			mockSlack.On("NotifyStartWithQuery", taskName, tt.tableName, expectedQuery, int64(0)).Return(nil)
+			mockSlack.On("NotifySuccessWithQuery", taskName, tt.tableName, expectedQuery, int64(0), mock.Anything).Return(nil)
 
-	require.NoError(t, err)
-	mockDB.AssertExpectations(t)
+			if !tt.dryRun {
+				mockDB.On("ExecuteAlter", expectedSQL).Return(nil)
+			}
+
+			err := manager.CleanupTable(tt.tableName)
+
+			require.NoError(t, err)
+			mockDB.AssertExpectations(t)
+			mockSlack.AssertExpectations(t)
+		})
+	}
 }
 
 func TestCleanupTriggers(t *testing.T) {

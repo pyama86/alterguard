@@ -113,6 +113,110 @@ func TestBuildArgsWithPassword(t *testing.T) {
 	}
 }
 
+func TestContainsErrorPattern(t *testing.T) {
+	logger := logrus.New()
+	executor := NewPtOscExecutor(logger)
+
+	tests := []struct {
+		name     string
+		line     string
+		expected bool
+	}{
+		{
+			name:     "SQL syntax error",
+			line:     "ERROR 1064 (42000): You have an error in your SQL syntax",
+			expected: true,
+		},
+		{
+			name:     "Unknown column error",
+			line:     "ERROR 1054 (42S22): Unknown column 'invalid_col' in 'field list'",
+			expected: true,
+		},
+		{
+			name:     "Unknown table error",
+			line:     "ERROR 1146 (42S02): Table 'testdb.nonexistent' doesn't exist",
+			expected: true,
+		},
+		{
+			name:     "Duplicate column name",
+			line:     "ERROR 1060 (42S21): Duplicate column name 'id'",
+			expected: true,
+		},
+		{
+			name:     "pt-osc error prefix",
+			line:     "pt-online-schema-change: error: Connection failed",
+			expected: true,
+		},
+		{
+			name:     "pt-osc fatal prefix",
+			line:     "pt-online-schema-change: fatal: Cannot connect to MySQL",
+			expected: true,
+		},
+		{
+			name:     "Generic error prefix",
+			line:     "ERROR: Operation failed",
+			expected: true,
+		},
+		{
+			name:     "Fatal prefix",
+			line:     "FATAL: Database connection lost",
+			expected: true,
+		},
+		{
+			name:     "Can't create table",
+			line:     "Can't create table 'testdb.users' (errno: 150)",
+			expected: true,
+		},
+		{
+			name:     "Access denied",
+			line:     "ERROR 1045 (28000): Access denied for user 'test'@'localhost'",
+			expected: true,
+		},
+		{
+			name:     "Normal log message",
+			line:     "Copying approximately 1000 rows...",
+			expected: false,
+		},
+		{
+			name:     "Progress message",
+			line:     "Copied 500 rows",
+			expected: false,
+		},
+		{
+			name:     "Success message",
+			line:     "Successfully altered table",
+			expected: false,
+		},
+		{
+			name:     "Column name containing error",
+			line:     "Processing column error_log",
+			expected: false,
+		},
+		{
+			name:     "Table name containing error",
+			line:     "Altering table user_errors",
+			expected: false,
+		},
+		{
+			name:     "Empty line",
+			line:     "",
+			expected: false,
+		},
+		{
+			name:     "Case insensitive SQL syntax error",
+			line:     "Error 1064: you have an error in your sql syntax",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := executor.containsErrorPattern(tt.line)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestParseDSN(t *testing.T) {
 	logger := logrus.New()
 	executor := NewPtOscExecutor(logger)
