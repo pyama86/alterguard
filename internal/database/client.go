@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
+	"github.com/sirupsen/logrus"
 )
 
 type Client interface {
@@ -28,10 +29,11 @@ func IsDuplicateError(err error) bool {
 }
 
 type MySQLClient struct {
-	db *sqlx.DB
+	db     *sqlx.DB
+	logger *logrus.Logger
 }
 
-func NewMySQLClient(dsn string) (*MySQLClient, error) {
+func NewMySQLClient(dsn string, logger *logrus.Logger) (*MySQLClient, error) {
 	db, err := sqlx.Connect("mysql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -41,7 +43,7 @@ func NewMySQLClient(dsn string) (*MySQLClient, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return &MySQLClient{db: db}, nil
+	return &MySQLClient{db: db, logger: logger}, nil
 }
 
 func (c *MySQLClient) GetTableRowCount(table string) (int64, error) {
@@ -64,10 +66,18 @@ func (c *MySQLClient) GetTableRowCount(table string) (int64, error) {
 }
 
 func (c *MySQLClient) ExecuteAlter(alterStatement string) error {
+	c.logger.Infof("Executing SQL: %s", alterStatement)
+	start := time.Now()
+
 	_, err := c.db.Exec(alterStatement)
+	duration := time.Since(start)
+
 	if err != nil {
+		c.logger.Errorf("SQL execution failed (duration: %v): %s - Error: %v", duration, alterStatement, err)
 		return fmt.Errorf("failed to execute ALTER statement [%s]: %w", alterStatement, err)
 	}
+
+	c.logger.Infof("SQL execution completed (duration: %v): %s", duration, alterStatement)
 	return nil
 }
 
@@ -108,16 +118,32 @@ func (c *MySQLClient) CheckMetadataLock(table string, thresholdSeconds int) (boo
 func (c *MySQLClient) SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error {
 	if lockWaitTimeout > 0 {
 		query := fmt.Sprintf("SET SESSION lock_wait_timeout = %d", lockWaitTimeout)
+		c.logger.Infof("Executing SQL: %s", query)
+		start := time.Now()
+
 		if _, err := c.db.Exec(query); err != nil {
+			duration := time.Since(start)
+			c.logger.Errorf("SQL execution failed (duration: %v): %s - Error: %v", duration, query, err)
 			return fmt.Errorf("failed to set lock_wait_timeout: %w", err)
 		}
+
+		duration := time.Since(start)
+		c.logger.Infof("SQL execution completed (duration: %v): %s", duration, query)
 	}
 
 	if innodbLockWaitTimeout > 0 {
 		query := fmt.Sprintf("SET SESSION innodb_lock_wait_timeout = %d", innodbLockWaitTimeout)
+		c.logger.Infof("Executing SQL: %s", query)
+		start := time.Now()
+
 		if _, err := c.db.Exec(query); err != nil {
+			duration := time.Since(start)
+			c.logger.Errorf("SQL execution failed (duration: %v): %s - Error: %v", duration, query, err)
 			return fmt.Errorf("failed to set innodb_lock_wait_timeout: %w", err)
 		}
+
+		duration := time.Since(start)
+		c.logger.Infof("SQL execution completed (duration: %v): %s", duration, query)
 	}
 
 	return nil

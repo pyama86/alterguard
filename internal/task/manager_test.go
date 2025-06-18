@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/pyama86/alterguard/internal/config"
+	"github.com/pyama86/alterguard/internal/ptosc"
+	"github.com/pyama86/alterguard/internal/slack"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -56,6 +58,14 @@ func (m *MockPtOscExecutor) ExecuteAlter(tableName, alterStatement string, ptOsc
 	return args.Error(0)
 }
 
+func (m *MockPtOscExecutor) ExecuteAlterWithDryRunResult(tableName, alterStatement string, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) (*ptosc.DryRunResult, error) {
+	args := m.Called(tableName, alterStatement, ptOscConfig, dsn, forceDryRun)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ptosc.DryRunResult), args.Error(1)
+}
+
 type MockSlackNotifier struct {
 	mock.Mock
 }
@@ -92,6 +102,11 @@ func (m *MockSlackNotifier) NotifySuccessWithQuery(taskName, tableName, query st
 
 func (m *MockSlackNotifier) NotifyFailureWithQuery(taskName, tableName, query string, rowCount int64, err error) error {
 	args := m.Called(taskName, tableName, query, rowCount, err)
+	return args.Error(0)
+}
+
+func (m *MockSlackNotifier) NotifyDryRunResult(taskName, tableName string, result *slack.DryRunResult, duration time.Duration) error {
+	args := m.Called(taskName, tableName, result, duration)
 	return args.Error(0)
 }
 

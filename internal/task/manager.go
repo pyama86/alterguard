@@ -237,16 +237,46 @@ func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, 
 	}
 
 	start := time.Now()
-	if err := m.ptosc.ExecuteAlter(tableName, combinedAlter, m.config.Common.PtOsc, m.config.DSN, m.dryRun); err != nil {
-		if slackErr := m.slack.NotifyFailureWithQuery(taskName, tableName, queryInfo, rowCount, err); slackErr != nil {
-			m.logger.Errorf("Failed to send failure notification: %v", slackErr)
-		}
-		return fmt.Errorf("pt-online-schema-change failed: %w", err)
-	}
 
-	duration := time.Since(start)
-	if err := m.slack.NotifySuccessWithQuery(taskName, tableName, queryInfo, rowCount, duration); err != nil {
-		m.logger.Errorf("Failed to send success notification: %v", err)
+	if m.dryRun {
+		dryRunResult, err := m.ptosc.ExecuteAlterWithDryRunResult(tableName, combinedAlter, m.config.Common.PtOsc, m.config.DSN, m.dryRun)
+		if err != nil {
+			if slackErr := m.slack.NotifyFailureWithQuery(taskName, tableName, queryInfo, rowCount, err); slackErr != nil {
+				m.logger.Errorf("Failed to send failure notification: %v", slackErr)
+			}
+			return fmt.Errorf("pt-online-schema-change dry run failed: %w", err)
+		}
+
+		duration := time.Since(start)
+		if dryRunResult != nil {
+			slackDryRunResult := &slack.DryRunResult{
+				EstimatedTime:    dryRunResult.EstimatedTime,
+				AffectedRows:     dryRunResult.AffectedRows,
+				ChunkCount:       dryRunResult.ChunkCount,
+				ValidationResult: dryRunResult.ValidationResult,
+				Warnings:         dryRunResult.Warnings,
+				Summary:          dryRunResult.Summary,
+			}
+			if err := m.slack.NotifyDryRunResult(taskName, tableName, slackDryRunResult, duration); err != nil {
+				m.logger.Errorf("Failed to send dry run result notification: %v", err)
+			}
+		} else {
+			if err := m.slack.NotifySuccessWithQuery(taskName, tableName, queryInfo, rowCount, duration); err != nil {
+				m.logger.Errorf("Failed to send success notification: %v", err)
+			}
+		}
+	} else {
+		if err := m.ptosc.ExecuteAlter(tableName, combinedAlter, m.config.Common.PtOsc, m.config.DSN, m.dryRun); err != nil {
+			if slackErr := m.slack.NotifyFailureWithQuery(taskName, tableName, queryInfo, rowCount, err); slackErr != nil {
+				m.logger.Errorf("Failed to send failure notification: %v", slackErr)
+			}
+			return fmt.Errorf("pt-online-schema-change failed: %w", err)
+		}
+
+		duration := time.Since(start)
+		if err := m.slack.NotifySuccessWithQuery(taskName, tableName, queryInfo, rowCount, duration); err != nil {
+			m.logger.Errorf("Failed to send success notification: %v", err)
+		}
 	}
 
 	return nil
@@ -291,7 +321,7 @@ func (m *Manager) executeSmallQueries(queries []QueryInfo) error {
 
 func (m *Manager) executeQuery(queryInfo *QueryInfo, taskName string) error {
 	if m.dryRun {
-		m.logger.Infof("[DRY RUN] Would execute query: %s", queryInfo.Query)
+		m.logger.Infof("[DRY RUN] Would execute SQL: %s", queryInfo.Query)
 		return nil
 	}
 
@@ -417,7 +447,7 @@ func (m *Manager) SwapTable(tableName string) error {
 	}
 
 	if m.dryRun {
-		m.logger.Infof("[DRY RUN] Would execute swap: %s", swapSQL)
+		m.logger.Infof("[DRY RUN] Would execute SQL: %s", swapSQL)
 		duration := time.Since(start)
 		if err := m.slack.NotifySuccessWithQuery(taskName, tableName, quotedQuery, 0, duration); err != nil {
 			m.logger.Errorf("Failed to send success notification: %v", err)
@@ -460,7 +490,7 @@ func (m *Manager) CleanupTable(tableName string) error {
 	start := time.Now()
 
 	if m.dryRun {
-		m.logger.Infof("[DRY RUN] Would execute cleanup: %s", dropSQL)
+		m.logger.Infof("[DRY RUN] Would execute SQL: %s", dropSQL)
 		duration := time.Since(start)
 		if err := m.slack.NotifySuccessWithQuery(taskName, tableName, quotedQuery, 0, duration); err != nil {
 			m.logger.Errorf("Failed to send success notification: %v", err)
@@ -496,7 +526,7 @@ func (m *Manager) CleanupTriggers(tableName string) error {
 	for _, trigger := range triggers {
 		dropSQL := fmt.Sprintf("DROP TRIGGER IF EXISTS %s", trigger)
 		if m.dryRun {
-			m.logger.Infof("[DRY RUN] Would execute trigger cleanup: %s", dropSQL)
+			m.logger.Infof("[DRY RUN] Would execute SQL: %s", dropSQL)
 			continue
 		}
 		if err := m.db.ExecuteAlter(dropSQL); err != nil {

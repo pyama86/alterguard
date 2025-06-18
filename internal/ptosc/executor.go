@@ -13,8 +13,18 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type DryRunResult struct {
+	EstimatedTime    string
+	AffectedRows     int64
+	ChunkCount       int
+	ValidationResult string
+	Warnings         []string
+	Summary          string
+}
+
 type Executor interface {
 	ExecuteAlter(tableName, alterStatement string, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) error
+	ExecuteAlterWithDryRunResult(tableName, alterStatement string, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) (*DryRunResult, error)
 }
 
 type PtOscExecutor struct {
@@ -41,7 +51,15 @@ func (e *PtOscExecutor) ExecuteAlter(tableName, alterStatement string, ptOscConf
 		return fmt.Errorf("failed to build pt-osc arguments: %w", err)
 	}
 
-	e.logger.Debugf("Command: pt-online-schema-change %s", strings.Join(args, " "))
+	// マスクされたコマンドをログ出力（パスワードを隠す）
+	maskedArgs := make([]string, len(args))
+	copy(maskedArgs, args)
+	for i, arg := range maskedArgs {
+		if arg == "--ask-pass" {
+			maskedArgs[i] = "--ask-pass [password masked]"
+		}
+	}
+	e.logger.Infof("Executing pt-online-schema-change command: pt-online-schema-change %s", strings.Join(maskedArgs, " "))
 
 	cmd := exec.Command("pt-online-schema-change", args...) // #nosec G204
 
@@ -269,3 +287,121 @@ func (e *PtOscExecutor) ParseDSN(dsn string) (host, port, database, user, passwo
 
 	return host, port, database, user, password, nil
 }
+
+func (e *PtOscExecutor) ExecuteAlterWithDryRunResult(tableName, alterStatement string, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool) (*DryRunResult, error) {
+	if !forceDryRun && !ptOscConfig.DryRun {
+		_, err := e.executeAlterInternal(tableName, alterStatement, ptOscConfig, dsn, forceDryRun, nil)
+		return nil, err
+	}
+
+	result := &DryRunResult{
+		Warnings: []string{},
+	}
+
+	_, err := e.executeAlterInternal(tableName, alterStatement, ptOscConfig, dsn, forceDryRun, result)
+	return result, err
+}
+
+func (e *PtOscExecutor) executeAlterInternal(tableName, alterStatement string, ptOscConfig config.PtOscConfig, dsn string, forceDryRun bool, dryRunResult *DryRunResult) (bool, error) {
+	e.mutex.Lock()
+	e.hasError = false
+	e.errorMessages = []string{}
+	e.mutex.Unlock()
+
+	args, password, err := e.BuildArgsWithPassword(tableName, alterStatement, ptOscConfig, dsn, forceDryRun)
+	if err != nil {
+		return false, fmt.Errorf("failed to build pt-osc arguments: %w", err)
+	}
+
+	// マスクされたコマンドをログ出力（パスワードを隠す）
+	maskedArgs := make([]string, len(args))
+	copy(maskedArgs, args)
+	for i, arg := range maskedArgs {
+		if arg == "--ask-pass" {
+			maskedArgs[i] = "--ask-pass [password masked]"
+		}
+	}
+	e.logger.Infof("Executing pt-online-schema-change command: pt-online-schema-change %s", strings.Join(maskedArgs, " "))
+
+	cmd := exec.Command("pt-online-schema-change", args...) // #nosec G204
+
+	if password != "" {
+		e.logger.Debugf("Using password for pt-online-schema-change")
+		cmd.Stdin = strings.NewReader(password + "\n")
+	}
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return false, fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return false, fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return false, fmt.Errorf("failed to start command: %w", err)
+	}
+
+	if dryRunResult != nil {
+		go e.logOutputWithDryRunAnalysis(stdoutPipe, false, dryRunResult)
+		go e.logOutputWithDryRunAnalysis(stderrPipe, true, dryRunResult)
+	} else {
+		go e.logOutput(stdoutPipe, false)
+		go e.logOutput(stderrPipe, true)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return false, fmt.Errorf("pt-online-schema-change failed for table %s: %w", tableName, err)
+	}
+
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	if e.hasError {
+		return false, fmt.Errorf("pt-online-schema-change detected errors for table %s: %s",
+			tableName, strings.Join(e.errorMessages, "; "))
+	}
+
+	e.logger.Infof("pt-online-schema-change completed successfully for table %s", tableName)
+	return true, nil
+}
+
+func (e *PtOscExecutor) logOutputWithDryRunAnalysis(r io.Reader, isError bool, result *DryRunResult) {
+	scanner := bufio.NewScanner(r)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// 全ての出力をSummaryに追加
+		if result.Summary != "" {
+			result.Summary += "\n"
+		}
+		if isError {
+			result.Summary += "[STDERR] " + line
+		} else {
+			result.Summary += "[STDOUT] " + line
+		}
+
+		if e.containsErrorPattern(line) {
+			e.mutex.Lock()
+			e.hasError = true
+			e.errorMessages = append(e.errorMessages, line)
+			e.mutex.Unlock()
+		}
+
+		// 簡単な検証結果の設定
+		if strings.Contains(line, "Dry run complete") {
+			result.ValidationResult = "Dry run completed successfully"
+		} else if strings.Contains(line, "Starting a dry run") {
+			result.ValidationResult = "Dry run started"
+		}
+
+		if isError {
+			e.logger.Errorf("[pt-osc] %s", line)
+		} else {
+			e.logger.Infof("[pt-osc] %s", line)
+		}
+	}
+}
+
+// analyzeDryRunLine は使用しない（全ログをSummaryに含めるため）

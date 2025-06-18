@@ -47,9 +47,6 @@ func init() {
 	if err := rootCmd.MarkPersistentFlagRequired("common-config"); err != nil {
 		logrus.Fatalf("Error marking common-config flag as required: %v", err)
 	}
-	if err := rootCmd.MarkPersistentFlagRequired("tasks-config"); err != nil {
-		logrus.Fatalf("Error marking tasks-config flag as required: %v", err)
-	}
 }
 
 func setupLogger() {

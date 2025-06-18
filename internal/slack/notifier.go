@@ -17,6 +17,16 @@ type Notifier interface {
 	NotifyStartWithQuery(taskName, tableName, query string, rowCount int64) error
 	NotifySuccessWithQuery(taskName, tableName, query string, rowCount int64, duration time.Duration) error
 	NotifyFailureWithQuery(taskName, tableName, query string, rowCount int64, err error) error
+	NotifyDryRunResult(taskName, tableName string, result *DryRunResult, duration time.Duration) error
+}
+
+type DryRunResult struct {
+	EstimatedTime    string
+	AffectedRows     int64
+	ChunkCount       int
+	ValidationResult string
+	Warnings         []string
+	Summary          string
 }
 
 type SlackNotifier struct {
@@ -86,6 +96,30 @@ func (n *SlackNotifier) NotifyFailureWithQuery(taskName, tableName, query string
 		taskName, tableName, rowCount, err.Error(), query)
 
 	return n.sendMessage(message, "danger")
+}
+
+func (n *SlackNotifier) NotifyDryRunResult(taskName, tableName string, result *DryRunResult, duration time.Duration) error {
+	var message string
+
+	if result.ValidationResult != "" {
+		message = fmt.Sprintf("🧪 Dry run completed\nTask: %s\nTable: %s\nDuration: %s\nStatus: %s",
+			taskName, tableName, duration.String(), result.ValidationResult)
+	} else {
+		message = fmt.Sprintf("🧪 Dry run completed\nTask: %s\nTable: %s\nDuration: %s",
+			taskName, tableName, duration.String())
+	}
+
+	// pt-oscの全出力をSummaryとして追加
+	if result.Summary != "" {
+		message += "\n\n📋 pt-osc Output:\n```\n" + result.Summary + "\n```"
+	}
+
+	color := "good"
+	if len(result.Warnings) > 0 {
+		color = "warning"
+	}
+
+	return n.sendMessage(message, color)
 }
 
 func (n *SlackNotifier) sendMessage(text, color string) error {

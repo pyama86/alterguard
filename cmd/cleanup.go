@@ -52,7 +52,7 @@ func cleanupTable(tableName string) error {
 	}
 
 	// Initialize database client
-	dbClient, err := database.NewMySQLClient(cfg.DSN)
+	dbClient, err := database.NewMySQLClient(cfg.DSN, logger)
 	if err != nil {
 		logger.Errorf("Failed to connect to database: %v", err)
 		return fmt.Errorf("database connection failed: %w", err)
