@@ -45,7 +45,7 @@ func cleanupTable(tableName string) error {
 	logger.Infof("Starting cleanup for %s", tableName)
 
 	// Load configuration
-	cfg, err := config.LoadConfig(commonConfigPath, tasksConfigPath)
+	cfg, err := config.LoadConfigWithEnvironment(commonConfigPath, tasksConfigPath, environment)
 	if err != nil {
 		logger.Errorf("Failed to load configuration: %v", err)
 		return fmt.Errorf("configuration load failed: %w", err)
@@ -69,7 +69,7 @@ func cleanupTable(tableName string) error {
 	ptoscExecutor := ptosc.NewPtOscExecutor(logger)
 
 	// Initialize Slack notifier
-	slackNotifier, err := slack.NewSlackNotifier(logger)
+	slackNotifier, err := slack.NewSlackNotifierWithEnvironment(logger, cfg.Environment)
 	if err != nil {
 		logger.Errorf("Failed to initialize Slack notifier: %v", err)
 		return fmt.Errorf("slack notifier initialization failed: %w", err)

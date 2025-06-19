@@ -103,7 +103,7 @@ run-docker-all: docker-down docker-up run-docker-exec run-docker-swap run-docker
 # Run alterguard in Docker environment
 run-docker-exec: docker-up
 	@echo "Running alterguard in Docker environment..."
-	$(GORUN) run --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
+	$(GORUN) run --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml --dry-run
 
 # Run alterguard swap in Docker environment
 run-docker-swap: docker-up

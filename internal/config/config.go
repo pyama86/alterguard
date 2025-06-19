@@ -39,12 +39,17 @@ type SessionConfig struct {
 }
 
 type Config struct {
-	Common  CommonConfig
-	Queries []string
-	DSN     string
+	Common      CommonConfig
+	Queries     []string
+	DSN         string
+	Environment string
 }
 
 func LoadConfig(commonConfigPath, tasksConfigPath string) (*Config, error) {
+	return LoadConfigWithEnvironment(commonConfigPath, tasksConfigPath, "")
+}
+
+func LoadConfigWithEnvironment(commonConfigPath, tasksConfigPath, environment string) (*Config, error) {
 	common, err := loadCommonConfig(commonConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load common config: %w", err)
@@ -60,14 +65,21 @@ func LoadConfig(commonConfigPath, tasksConfigPath string) (*Config, error) {
 		return nil, fmt.Errorf("DATABASE_DSN environment variable is not set")
 	}
 
+	env := resolveEnvironment(environment)
+
 	return &Config{
-		Common:  *common,
-		Queries: queries,
-		DSN:     dsn,
+		Common:      *common,
+		Queries:     queries,
+		DSN:         dsn,
+		Environment: env,
 	}, nil
 }
 
 func LoadConfigWithStdin(commonConfigPath, tasksConfigPath string, useStdin bool) (*Config, error) {
+	return LoadConfigWithStdinAndEnvironment(commonConfigPath, tasksConfigPath, useStdin, "")
+}
+
+func LoadConfigWithStdinAndEnvironment(commonConfigPath, tasksConfigPath string, useStdin bool, environment string) (*Config, error) {
 	common, err := loadCommonConfig(commonConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load common config: %w", err)
@@ -99,11 +111,30 @@ func LoadConfigWithStdin(commonConfigPath, tasksConfigPath string, useStdin bool
 		return nil, fmt.Errorf("DATABASE_DSN environment variable is not set")
 	}
 
+	env := resolveEnvironment(environment)
+
 	return &Config{
-		Common:  *common,
-		Queries: queries,
-		DSN:     dsn,
+		Common:      *common,
+		Queries:     queries,
+		DSN:         dsn,
+		Environment: env,
 	}, nil
+}
+
+func resolveEnvironment(cmdLineEnv string) string {
+	if cmdLineEnv != "" {
+		return cmdLineEnv
+	}
+
+	if envVar := os.Getenv("ALTERGUARD_ENVIRONMENT"); envVar != "" {
+		return envVar
+	}
+
+	return ""
+}
+
+func ResolveEnvironment(cmdLineEnv string) string {
+	return resolveEnvironment(cmdLineEnv)
 }
 
 func loadCommonConfig(path string) (*CommonConfig, error) {

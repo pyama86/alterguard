@@ -57,9 +57,9 @@ func runTasks() error {
 	var err error
 
 	if useStdin {
-		cfg, err = config.LoadConfigWithStdin(commonConfigPath, tasksConfigPath, useStdin)
+		cfg, err = config.LoadConfigWithStdinAndEnvironment(commonConfigPath, tasksConfigPath, useStdin, environment)
 	} else {
-		cfg, err = config.LoadConfig(commonConfigPath, tasksConfigPath)
+		cfg, err = config.LoadConfigWithEnvironment(commonConfigPath, tasksConfigPath, environment)
 	}
 
 	if err != nil {
@@ -87,7 +87,7 @@ func runTasks() error {
 	ptoscExecutor := ptosc.NewPtOscExecutor(logger)
 
 	// Initialize Slack notifier
-	slackNotifier, err := slack.NewSlackNotifier(logger)
+	slackNotifier, err := slack.NewSlackNotifierWithEnvironment(logger, cfg.Environment)
 	if err != nil {
 		logger.Errorf("Failed to initialize Slack notifier: %v", err)
 		return fmt.Errorf("slack notifier initialization failed: %w", err)

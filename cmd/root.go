@@ -11,6 +11,7 @@ var (
 	commonConfigPath string
 	tasksConfigPath  string
 	dryRun           bool
+	environment      string
 	logger           *logrus.Logger
 	version          string
 )
@@ -43,6 +44,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&commonConfigPath, "common-config", "", "Path to common configuration file (required)")
 	rootCmd.PersistentFlags().StringVar(&tasksConfigPath, "tasks-config", "", "Path to tasks configuration file (required unless --stdin is used)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Force pt-osc to run in dry-run mode")
+	rootCmd.PersistentFlags().StringVarP(&environment, "environment", "e", "", "Environment name (e.g., dev, qa, prod)")
 
 	if err := rootCmd.MarkPersistentFlagRequired("common-config"); err != nil {
 		logrus.Fatalf("Error marking common-config flag as required: %v", err)

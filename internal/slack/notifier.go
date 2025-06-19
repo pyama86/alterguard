@@ -30,11 +30,16 @@ type DryRunResult struct {
 }
 
 type SlackNotifier struct {
-	client *slack.Client
-	logger *logrus.Logger
+	client      *slack.Client
+	logger      *logrus.Logger
+	environment string
 }
 
 func NewSlackNotifier(logger *logrus.Logger) (*SlackNotifier, error) {
+	return NewSlackNotifierWithEnvironment(logger, "")
+}
+
+func NewSlackNotifierWithEnvironment(logger *logrus.Logger, environment string) (*SlackNotifier, error) {
 	webhookURL := os.Getenv("SLACK_WEBHOOK_URL")
 	var client *slack.Client
 	if webhookURL == "" {
@@ -44,72 +49,91 @@ func NewSlackNotifier(logger *logrus.Logger) (*SlackNotifier, error) {
 	}
 
 	return &SlackNotifier{
-		client: client,
-		logger: logger,
+		client:      client,
+		logger:      logger,
+		environment: environment,
 	}, nil
 }
 
+func (n *SlackNotifier) formatTitle(title string) string {
+	if n.environment != "" {
+		return fmt.Sprintf("%s [%s]", title, n.environment)
+	}
+	return title
+}
+
+func (n *SlackNotifier) FormatTitle(title string) string {
+	return n.formatTitle(title)
+}
+
 func (n *SlackNotifier) NotifyStart(taskName, tableName string, rowCount int64) error {
-	message := fmt.Sprintf("🚀 Schema change started\nTask: %s\nTable: %s\nRow count: %d",
-		taskName, tableName, rowCount)
+	title := n.formatTitle("🚀 Schema change started")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nRow count: %d",
+		title, taskName, tableName, rowCount)
 
 	return n.sendMessage(message, "good")
 }
 
 func (n *SlackNotifier) NotifySuccess(taskName, tableName string, rowCount int64, duration time.Duration) error {
-	message := fmt.Sprintf("✅ Schema change completed successfully\nTask: %s\nTable: %s\nRow count: %d\nDuration: %s",
-		taskName, tableName, rowCount, duration.String())
+	title := n.formatTitle("✅ Schema change completed successfully")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nRow count: %d\nDuration: %s",
+		title, taskName, tableName, rowCount, duration.String())
 
 	return n.sendMessage(message, "good")
 }
 
 func (n *SlackNotifier) NotifyFailure(taskName, tableName string, rowCount int64, err error) error {
-	message := fmt.Sprintf("❌ Schema change failed\nTask: %s\nTable: %s\nRow count: %d\nError: %s",
-		taskName, tableName, rowCount, err.Error())
+	title := n.formatTitle("❌ Schema change failed")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nRow count: %d\nError: %s",
+		title, taskName, tableName, rowCount, err.Error())
 
 	return n.sendMessage(message, "danger")
 }
 
 func (n *SlackNotifier) NotifyWarning(taskName, tableName string, message string) error {
-	msg := fmt.Sprintf("⚠️ Schema change warning\nTask: %s\nTable: %s\nWarning: %s",
-		taskName, tableName, message)
+	title := n.formatTitle("⚠️ Schema change warning")
+	msg := fmt.Sprintf("%s\nTask: %s\nTable: %s\nWarning: %s",
+		title, taskName, tableName, message)
 
 	return n.sendMessage(msg, "warning")
 }
 
 func (n *SlackNotifier) NotifyStartWithQuery(taskName, tableName, query string, rowCount int64) error {
-	message := fmt.Sprintf("🚀 Schema change started\nTask: %s\nTable: %s\nRow count: %d\nQuery: %s",
-		taskName, tableName, rowCount, query)
+	title := n.formatTitle("🚀 Schema change started")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nRow count: %d\nQuery: %s",
+		title, taskName, tableName, rowCount, query)
 
 	return n.sendMessage(message, "good")
 }
 
 func (n *SlackNotifier) NotifySuccessWithQuery(taskName, tableName, query string, rowCount int64, duration time.Duration) error {
-	message := fmt.Sprintf("✅ Schema change completed successfully\nTask: %s\nTable: %s\nRow count: %d\nDuration: %s\nQuery: %s",
-		taskName, tableName, rowCount, duration.String(), query)
+	title := n.formatTitle("✅ Schema change completed successfully")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nRow count: %d\nDuration: %s\nQuery: %s",
+		title, taskName, tableName, rowCount, duration.String(), query)
 
 	return n.sendMessage(message, "good")
 }
 
 func (n *SlackNotifier) NotifyFailureWithQuery(taskName, tableName, query string, rowCount int64, err error) error {
-	message := fmt.Sprintf("❌ Schema change failed\nTask: %s\nTable: %s\nRow count: %d\nError: %s\nQuery: %s",
-		taskName, tableName, rowCount, err.Error(), query)
+	title := n.formatTitle("❌ Schema change failed")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nRow count: %d\nError: %s\nQuery: %s",
+		title, taskName, tableName, rowCount, err.Error(), query)
 
 	return n.sendMessage(message, "danger")
 }
 
 func (n *SlackNotifier) NotifyDryRunResult(taskName, tableName string, result *DryRunResult, duration time.Duration) error {
+	title := n.formatTitle("🧪 Dry run completed")
 	var message string
 
 	if result.ValidationResult != "" {
-		message = fmt.Sprintf("🧪 Dry run completed\nTask: %s\nTable: %s\nDuration: %s\nStatus: %s",
-			taskName, tableName, duration.String(), result.ValidationResult)
+		message = fmt.Sprintf("%s\nTask: %s\nTable: %s\nDuration: %s\nStatus: %s",
+			title, taskName, tableName, duration.String(), result.ValidationResult)
 	} else {
-		message = fmt.Sprintf("🧪 Dry run completed\nTask: %s\nTable: %s\nDuration: %s",
-			taskName, tableName, duration.String())
+		message = fmt.Sprintf("%s\nTask: %s\nTable: %s\nDuration: %s",
+			title, taskName, tableName, duration.String())
 	}
 
-	// pt-oscの全出力をSummaryとして追加
 	if result.Summary != "" {
 		message += "\n\n📋 pt-osc Output:\n```\n" + result.Summary + "\n```"
 	}
