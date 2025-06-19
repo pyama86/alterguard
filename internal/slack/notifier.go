@@ -156,8 +156,13 @@ func (n *SlackNotifier) sendMessage(text, color string) error {
 		Text:  text,
 	}
 
+	username := "alterguard"
+	if n.environment != "" {
+		username = fmt.Sprintf("[%s] %s", n.environment, username)
+	}
+
 	msg := &slack.WebhookMessage{
-		Username:    "alterguard",
+		Username:    username,
 		IconEmoji:   ":gear:",
 		Attachments: []slack.Attachment{attachment},
 	}
