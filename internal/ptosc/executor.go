@@ -84,15 +84,24 @@ func (e *PtOscExecutor) ExecuteAlter(tableName, alterStatement string, ptOscConf
 	go e.logOutput(stdoutPipe, false)
 	go e.logOutput(stderrPipe, true)
 
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("pt-online-schema-change failed for table %s: %w", tableName, err)
-	}
+	cmdErr := cmd.Wait()
 
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
-	if e.hasError {
-		return fmt.Errorf("pt-online-schema-change detected errors for table %s: %s",
-			tableName, strings.Join(e.errorMessages, "; "))
+
+	// コマンドが異常終了した場合、またはエラーパターンが検出された場合はエラーとする
+	if cmdErr != nil || e.hasError {
+		var errorMsg string
+		if cmdErr != nil && e.hasError {
+			errorMsg = fmt.Sprintf("pt-online-schema-change failed for table %s: %v (detected errors: %s)",
+				tableName, cmdErr, strings.Join(e.errorMessages, "; "))
+		} else if cmdErr != nil {
+			errorMsg = fmt.Sprintf("pt-online-schema-change failed for table %s: %v", tableName, cmdErr)
+		} else {
+			errorMsg = fmt.Sprintf("pt-online-schema-change detected errors for table %s: %s",
+				tableName, strings.Join(e.errorMessages, "; "))
+		}
+		return fmt.Errorf("%s", errorMsg)
 	}
 
 	e.logger.Infof("pt-online-schema-change completed successfully for table %s", tableName)
@@ -155,6 +164,9 @@ func (e *PtOscExecutor) containsErrorPattern(line string) bool {
 		"connection refused",
 		"lost connection",
 		"cannot connect to mysql",
+		"cannot read response",
+		"enter mysql password",
+		"can't locate term/readkey",
 		"operation failed",
 	}
 
@@ -351,15 +363,24 @@ func (e *PtOscExecutor) executeAlterInternal(tableName, alterStatement string, p
 		go e.logOutput(stderrPipe, true)
 	}
 
-	if err := cmd.Wait(); err != nil {
-		return false, fmt.Errorf("pt-online-schema-change failed for table %s: %w", tableName, err)
-	}
+	cmdErr := cmd.Wait()
 
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
-	if e.hasError {
-		return false, fmt.Errorf("pt-online-schema-change detected errors for table %s: %s",
-			tableName, strings.Join(e.errorMessages, "; "))
+
+	// コマンドが異常終了した場合、またはエラーパターンが検出された場合はエラーとする
+	if cmdErr != nil || e.hasError {
+		var errorMsg string
+		if cmdErr != nil && e.hasError {
+			errorMsg = fmt.Sprintf("pt-online-schema-change failed for table %s: %v (detected errors: %s)",
+				tableName, cmdErr, strings.Join(e.errorMessages, "; "))
+		} else if cmdErr != nil {
+			errorMsg = fmt.Sprintf("pt-online-schema-change failed for table %s: %v", tableName, cmdErr)
+		} else {
+			errorMsg = fmt.Sprintf("pt-online-schema-change detected errors for table %s: %s",
+				tableName, strings.Join(e.errorMessages, "; "))
+		}
+		return false, fmt.Errorf("%s", errorMsg)
 	}
 
 	e.logger.Infof("pt-online-schema-change completed successfully for table %s", tableName)

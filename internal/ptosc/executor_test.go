@@ -207,6 +207,31 @@ func TestContainsErrorPattern(t *testing.T) {
 			line:     "Error 1064: you have an error in your sql syntax",
 			expected: true,
 		},
+		{
+			name:     "Cannot read response error",
+			line:     "Cannot read response; is Term::ReadKey installed?",
+			expected: true,
+		},
+		{
+			name:     "Enter MySQL password prompt",
+			line:     "Enter MySQL password: ",
+			expected: true,
+		},
+		{
+			name:     "Can't locate Term/ReadKey error",
+			line:     "Can't locate Term/ReadKey.pm in @INC",
+			expected: true,
+		},
+		{
+			name:     "Case insensitive cannot read response",
+			line:     "CANNOT READ RESPONSE; IS TERM::READKEY INSTALLED?",
+			expected: true,
+		},
+		{
+			name:     "Case insensitive enter mysql password",
+			line:     "ENTER MYSQL PASSWORD:",
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
