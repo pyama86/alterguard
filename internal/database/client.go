@@ -16,6 +16,7 @@ type Client interface {
 	ExecuteAlterWithDryRun(alterStatement string, dryRun bool) error
 	CheckMetadataLock(table string, thresholdSeconds int) (bool, error)
 	SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error
+	TableExists(tableName string) (bool, error)
 	Close() error
 }
 
@@ -147,6 +148,22 @@ func (c *MySQLClient) SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout in
 	}
 
 	return nil
+}
+
+func (c *MySQLClient) TableExists(tableName string) (bool, error) {
+	var count int
+	query := `
+		SELECT COUNT(*)
+		FROM information_schema.TABLES
+		WHERE table_schema = DATABASE() AND table_name = ?
+	`
+
+	err := c.db.Get(&count, query, tableName)
+	if err != nil {
+		return false, fmt.Errorf("failed to check table existence for %s: %w", tableName, err)
+	}
+
+	return count > 0, nil
 }
 
 func (c *MySQLClient) Close() error {

@@ -44,6 +44,11 @@ func (m *MockDBClient) SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout i
 	return args.Error(0)
 }
 
+func (m *MockDBClient) TableExists(tableName string) (bool, error) {
+	args := m.Called(tableName)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockDBClient) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -290,47 +295,80 @@ func TestExecuteAllTasks(t *testing.T) {
 
 func TestSwapTable(t *testing.T) {
 	tests := []struct {
-		name           string
-		tableName      string
-		lockDetected   bool
-		lockCheckError error
-		swapError      error
-		expectError    bool
-		expectWarning  bool
+		name                string
+		tableName           string
+		originalTableExists bool
+		newTableExists      bool
+		tableExistsError    error
+		lockDetected        bool
+		lockCheckError      error
+		swapError           error
+		expectError         bool
+		expectWarning       bool
 	}{
 		{
-			name:          "successful swap without lock",
-			tableName:     "test_table",
-			lockDetected:  false,
-			expectError:   false,
-			expectWarning: false,
+			name:                "successful swap without lock",
+			tableName:           "test_table",
+			originalTableExists: true,
+			newTableExists:      true,
+			lockDetected:        false,
+			expectError:         false,
+			expectWarning:       false,
 		},
 		{
-			name:          "successful swap with lock warning",
-			tableName:     "test_table",
-			lockDetected:  true,
-			expectError:   false,
-			expectWarning: true,
+			name:                "successful swap with lock warning",
+			tableName:           "test_table",
+			originalTableExists: true,
+			newTableExists:      true,
+			lockDetected:        true,
+			expectError:         false,
+			expectWarning:       true,
 		},
 		{
-			name:           "lock check error",
-			tableName:      "test_table",
-			lockCheckError: errors.New("lock check failed"),
-			expectError:    true,
+			name:                "original table does not exist",
+			tableName:           "test_table",
+			originalTableExists: false,
+			newTableExists:      true,
+			expectError:         true,
 		},
 		{
-			name:         "swap error",
-			tableName:    "test_table",
-			lockDetected: false,
-			swapError:    errors.New("swap failed"),
-			expectError:  true,
+			name:                "new table does not exist",
+			tableName:           "test_table",
+			originalTableExists: true,
+			newTableExists:      false,
+			expectError:         true,
 		},
 		{
-			name:          "dry run mode",
-			tableName:     "test_table",
-			lockDetected:  false,
-			expectError:   false,
-			expectWarning: false,
+			name:             "table exists check error",
+			tableName:        "test_table",
+			tableExistsError: errors.New("table exists check failed"),
+			expectError:      true,
+		},
+		{
+			name:                "lock check error",
+			tableName:           "test_table",
+			originalTableExists: true,
+			newTableExists:      true,
+			lockCheckError:      errors.New("lock check failed"),
+			expectError:         true,
+		},
+		{
+			name:                "swap error",
+			tableName:           "test_table",
+			originalTableExists: true,
+			newTableExists:      true,
+			lockDetected:        false,
+			swapError:           errors.New("swap failed"),
+			expectError:         true,
+		},
+		{
+			name:                "dry run mode",
+			tableName:           "test_table",
+			originalTableExists: true,
+			newTableExists:      true,
+			lockDetected:        false,
+			expectError:         false,
+			expectWarning:       false,
 		},
 	}
 
@@ -357,6 +395,25 @@ func TestSwapTable(t *testing.T) {
 
 			isDryRun := tt.name == "dry run mode"
 			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, isDryRun)
+
+			// テーブル存在確認のモック設定
+			if tt.tableExistsError != nil {
+				mockDB.On("TableExists", tt.tableName).Return(false, tt.tableExistsError)
+			} else {
+				mockDB.On("TableExists", tt.tableName).Return(tt.originalTableExists, nil)
+				if tt.originalTableExists {
+					newTableName := fmt.Sprintf("_%s_new", tt.tableName)
+					mockDB.On("TableExists", newTableName).Return(tt.newTableExists, nil)
+				}
+			}
+
+			// テーブルが存在しない場合は早期リターンするため、以下の処理は実行されない
+			if !tt.originalTableExists || !tt.newTableExists || tt.tableExistsError != nil {
+				err := manager.SwapTable(tt.tableName)
+				assert.Error(t, err)
+				mockDB.AssertExpectations(t)
+				return
+			}
 
 			expectedQuery := fmt.Sprintf("`RENAME TABLE %s TO %s_old, _%s_new TO %s`", tt.tableName, tt.tableName, tt.tableName, tt.tableName)
 			taskName := "swap"

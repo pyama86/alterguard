@@ -412,6 +412,27 @@ func (m *Manager) extractAlterStatement(query string) string {
 func (m *Manager) SwapTable(tableName string) error {
 	m.logger.Infof("Starting table swap for %s", tableName)
 
+	originalTableExists, err := m.db.TableExists(tableName)
+	if err != nil {
+		m.logger.Errorf("Failed to check original table existence: %v", err)
+		return fmt.Errorf("failed to check original table existence: %w", err)
+	}
+	if !originalTableExists {
+		return fmt.Errorf("original table %s does not exist", tableName)
+	}
+
+	newTableName := fmt.Sprintf("_%s_new", tableName)
+	newTableExists, err := m.db.TableExists(newTableName)
+	if err != nil {
+		m.logger.Errorf("Failed to check new table existence: %v", err)
+		return fmt.Errorf("failed to check new table existence: %w", err)
+	}
+	if !newTableExists {
+		return fmt.Errorf("new table %s does not exist", newTableName)
+	}
+
+	m.logger.Infof("Both tables exist: %s and %s", tableName, newTableName)
+
 	swapSQL := fmt.Sprintf("RENAME TABLE %s TO %s_old, _%s_new TO %s",
 		tableName, tableName, tableName, tableName)
 	cleanedQuery := strings.ReplaceAll(swapSQL, "`", "")
