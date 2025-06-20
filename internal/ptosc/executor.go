@@ -31,6 +31,8 @@ type PtOscExecutor struct {
 	logger        *logrus.Logger
 	hasError      bool
 	errorMessages []string
+	outputLines   []string
+	outputSummary string
 	mutex         sync.Mutex
 }
 
@@ -44,6 +46,8 @@ func (e *PtOscExecutor) ExecuteAlter(tableName, alterStatement string, ptOscConf
 	e.mutex.Lock()
 	e.hasError = false
 	e.errorMessages = []string{}
+	e.outputLines = []string{}
+	e.outputSummary = ""
 	e.mutex.Unlock()
 
 	args, password, err := e.BuildArgsWithPassword(tableName, alterStatement, ptOscConfig, dsn, forceDryRun)
@@ -81,8 +85,8 @@ func (e *PtOscExecutor) ExecuteAlter(tableName, alterStatement string, ptOscConf
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	go e.logOutput(stdoutPipe, false)
-	go e.logOutput(stderrPipe, true)
+	go e.logOutputWithSummary(stdoutPipe, false)
+	go e.logOutputWithSummary(stderrPipe, true)
 
 	cmdErr := cmd.Wait()
 
@@ -128,6 +132,43 @@ func (e *PtOscExecutor) logOutput(r io.Reader, isError bool) {
 	}
 }
 
+func (e *PtOscExecutor) logOutputWithSummary(r io.Reader, isError bool) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		e.mutex.Lock()
+		if e.outputSummary != "" {
+			e.outputSummary += "\n"
+		}
+		if isError {
+			e.outputSummary += "[STDERR] " + line
+		} else {
+			e.outputSummary += "[STDOUT] " + line
+		}
+		e.mutex.Unlock()
+
+		if e.containsErrorPattern(line) {
+			e.mutex.Lock()
+			e.hasError = true
+			e.errorMessages = append(e.errorMessages, line)
+			e.mutex.Unlock()
+		}
+
+		if isError {
+			e.logger.Errorf("[pt-osc] %s", line)
+		} else {
+			e.logger.Infof("[pt-osc] %s", line)
+		}
+	}
+}
+
+func (e *PtOscExecutor) GetOutputSummary() string {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	return e.outputSummary
+}
+
 func (e *PtOscExecutor) containsErrorPattern(line string) bool {
 	line = strings.ToLower(strings.TrimSpace(line))
 
@@ -165,7 +206,6 @@ func (e *PtOscExecutor) containsErrorPattern(line string) bool {
 		"lost connection",
 		"cannot connect to mysql",
 		"cannot read response",
-		"enter mysql password",
 		"can't locate term/readkey",
 		"operation failed",
 	}

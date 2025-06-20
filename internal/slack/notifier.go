@@ -17,6 +17,8 @@ type Notifier interface {
 	NotifyStartWithQuery(taskName, tableName, query string, rowCount int64) error
 	NotifySuccessWithQuery(taskName, tableName, query string, rowCount int64, duration time.Duration) error
 	NotifyFailureWithQuery(taskName, tableName, query string, rowCount int64, err error) error
+	NotifySuccessWithQueryAndLog(taskName, tableName, query string, rowCount int64, duration time.Duration, ptOscLog string) error
+	NotifyFailureWithQueryAndLog(taskName, tableName, query string, rowCount int64, err error, ptOscLog string) error
 	NotifyDryRunResult(taskName, tableName string, result *DryRunResult, duration time.Duration) error
 }
 
@@ -118,6 +120,30 @@ func (n *SlackNotifier) NotifyFailureWithQuery(taskName, tableName, query string
 	title := n.formatTitle("❌ Schema change failed")
 	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nRow count: %d\nError: %s\nQuery: %s",
 		title, taskName, tableName, rowCount, err.Error(), query)
+
+	return n.sendMessage(message, "danger")
+}
+
+func (n *SlackNotifier) NotifySuccessWithQueryAndLog(taskName, tableName, query string, rowCount int64, duration time.Duration, ptOscLog string) error {
+	title := n.formatTitle("✅ Schema change completed successfully")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nRow count: %d\nDuration: %s\nQuery: %s",
+		title, taskName, tableName, rowCount, duration.String(), query)
+
+	if ptOscLog != "" {
+		message += "\n\n📋 pt-osc Output:\n```\n" + ptOscLog + "\n```"
+	}
+
+	return n.sendMessage(message, "good")
+}
+
+func (n *SlackNotifier) NotifyFailureWithQueryAndLog(taskName, tableName, query string, rowCount int64, err error, ptOscLog string) error {
+	title := n.formatTitle("❌ Schema change failed")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nRow count: %d\nError: %s\nQuery: %s",
+		title, taskName, tableName, rowCount, err.Error(), query)
+
+	if ptOscLog != "" {
+		message += "\n\n📋 pt-osc Output:\n```\n" + ptOscLog + "\n```"
+	}
 
 	return n.sendMessage(message, "danger")
 }

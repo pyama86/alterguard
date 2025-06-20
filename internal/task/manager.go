@@ -267,14 +267,22 @@ func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, 
 		}
 	} else {
 		if err := m.ptosc.ExecuteAlter(tableName, combinedAlter, m.config.Common.PtOsc, m.config.DSN, m.dryRun); err != nil {
-			if slackErr := m.slack.NotifyFailureWithQuery(taskName, tableName, queryInfo, rowCount, err); slackErr != nil {
+			var ptOscLog string
+			if ptOscExecutor, ok := m.ptosc.(*ptosc.PtOscExecutor); ok {
+				ptOscLog = ptOscExecutor.GetOutputSummary()
+			}
+			if slackErr := m.slack.NotifyFailureWithQueryAndLog(taskName, tableName, queryInfo, rowCount, err, ptOscLog); slackErr != nil {
 				m.logger.Errorf("Failed to send failure notification: %v", slackErr)
 			}
 			return fmt.Errorf("pt-online-schema-change failed: %w", err)
 		}
 
 		duration := time.Since(start)
-		if err := m.slack.NotifySuccessWithQuery(taskName, tableName, queryInfo, rowCount, duration); err != nil {
+		var ptOscLog string
+		if ptOscExecutor, ok := m.ptosc.(*ptosc.PtOscExecutor); ok {
+			ptOscLog = ptOscExecutor.GetOutputSummary()
+		}
+		if err := m.slack.NotifySuccessWithQueryAndLog(taskName, tableName, queryInfo, rowCount, duration, ptOscLog); err != nil {
 			m.logger.Errorf("Failed to send success notification: %v", err)
 		}
 	}

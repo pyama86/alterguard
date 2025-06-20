@@ -215,7 +215,7 @@ func TestContainsErrorPattern(t *testing.T) {
 		{
 			name:     "Enter MySQL password prompt",
 			line:     "Enter MySQL password: ",
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "Can't locate Term/ReadKey error",
@@ -230,7 +230,7 @@ func TestContainsErrorPattern(t *testing.T) {
 		{
 			name:     "Case insensitive enter mysql password",
 			line:     "ENTER MYSQL PASSWORD:",
-			expected: true,
+			expected: false,
 		},
 	}
 
