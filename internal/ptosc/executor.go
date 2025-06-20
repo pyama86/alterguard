@@ -293,7 +293,7 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 }
 
 func (e *PtOscExecutor) ParseDSN(dsn string) (host, port, database, user, password string, err error) {
-	parts := strings.Split(dsn, "@")
+	parts := strings.Split(dsn, "@tcp")
 	if len(parts) != 2 {
 		return "", "", "", "", "", fmt.Errorf("invalid DSN format")
 	}
@@ -312,11 +312,11 @@ func (e *PtOscExecutor) ParseDSN(dsn string) (host, port, database, user, passwo
 		return "", "", "", "", "", fmt.Errorf("invalid user:password format")
 	}
 
-	if !strings.HasPrefix(hostPart, "tcp(") {
+	if !strings.HasPrefix(hostPart, "(") {
 		return "", "", "", "", "", fmt.Errorf("only TCP connections are supported")
 	}
 
-	hostPart = strings.TrimPrefix(hostPart, "tcp(")
+	hostPart = strings.TrimPrefix(hostPart, "(")
 	parts = strings.Split(hostPart, ")/")
 	if len(parts) != 2 {
 		return "", "", "", "", "", fmt.Errorf("invalid DSN format")
