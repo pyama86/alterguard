@@ -155,6 +155,9 @@ func (e *PtOscExecutor) containsErrorPattern(line string) bool {
 		"connection refused",
 		"lost connection",
 		"cannot connect to mysql",
+		"cannot read response",
+		"enter mysql password",
+		"can't locate term/readkey",
 		"operation failed",
 	}
 
