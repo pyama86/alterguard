@@ -94,20 +94,3 @@ release:
     ```
 
   name_template: "Release {{ .Version }}"
-
-brews:
-  - name: alterguard
-    repository:
-      owner: pyama86
-      name: homebrew-tap
-    commit_author:
-      name: pyama86
-      email: www.kazu.com@gmail.com
-
-    homepage: "https://github.com/pyama86/alterguard"
-    description: "MySQL schema change utility that automatically chooses between ALTER TABLE and pt-online-schema-change"
-    license: "MIT"
-    test: |
-      system "#{bin}/alterguard --help"
-    install: |
-      bin.install "alterguard"

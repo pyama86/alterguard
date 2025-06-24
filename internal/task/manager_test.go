@@ -569,6 +569,44 @@ func TestCleanupTriggers(t *testing.T) {
 	mockDB.AssertExpectations(t)
 }
 
+func TestPtOscWithNewTableCount(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	mockDB := &MockDBClient{}
+	mockPtOsc := &MockPtOscExecutor{}
+	mockSlack := &MockSlackNotifier{}
+
+	cfg := &config.Config{
+		Queries: []string{"ALTER TABLE large_table ADD COLUMN new_col INT"},
+		Common: config.CommonConfig{
+			PtOsc:          config.PtOscConfig{},
+			PtOscThreshold: 1000,
+			ConnectionCheck: config.ConnectionCheckConfig{
+				Enabled: false,
+			},
+		},
+		DSN: "test-dsn",
+	}
+
+	// 大きなテーブル（pt-oscを使用）
+	mockDB.On("GetTableRowCount", "large_table").Return(int64(5000), nil)
+	mockDB.On("GetNewTableRowCount", "large_table").Return(int64(5001), nil)
+
+	largeAlterQuery := "ALTER: `ALTER TABLE large_table ADD COLUMN new_col INT`\npt-osc: `pt-online-schema-change --alter='ADD COLUMN new_col INT' --execute`"
+	mockSlack.On("NotifyStartWithQuery", "pt-osc", "large_table", largeAlterQuery, int64(5000)).Return(nil)
+	mockSlack.On("NotifyPtOscCompletionWithNewTableCount", "pt-osc", "large_table", int64(5000), int64(5001), mock.Anything, mock.Anything).Return(nil)
+	mockPtOsc.On("ExecuteAlter", "large_table", "ADD COLUMN new_col INT", config.PtOscConfig{}, "test-dsn", false).Return(nil)
+
+	manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+	err := manager.ExecuteAllTasks()
+
+	require.NoError(t, err)
+	mockDB.AssertExpectations(t)
+	mockPtOsc.AssertExpectations(t)
+	mockSlack.AssertExpectations(t)
+}
+
 func TestConnectionCheck(t *testing.T) {
 	tests := []struct {
 		name                   string
