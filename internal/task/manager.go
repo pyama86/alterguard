@@ -581,6 +581,18 @@ func (m *Manager) CleanupTriggers(tableName string) error {
 		fmt.Sprintf("pt_osc_%s_ins", tableName),
 	}
 
+	taskName := "trigger-cleanup"
+	if m.dryRun {
+		taskName = "trigger-cleanup (DRY RUN)"
+	}
+
+	if err := m.slack.NotifyTriggerCleanupStart(taskName, tableName, triggers); err != nil {
+		m.logger.Errorf("Failed to send trigger cleanup start notification: %v", err)
+	}
+
+	start := time.Now()
+	var hasErrors bool
+
 	for _, trigger := range triggers {
 		dropSQL := fmt.Sprintf("DROP TRIGGER IF EXISTS %s", trigger)
 		if m.dryRun {
@@ -589,31 +601,28 @@ func (m *Manager) CleanupTriggers(tableName string) error {
 		}
 		if err := m.db.ExecuteAlter(dropSQL); err != nil {
 			m.logger.Errorf("Failed to drop trigger %s: %v", trigger, err)
+			hasErrors = true
 		} else {
 			m.logger.Infof("Dropped trigger %s", trigger)
 		}
 	}
 
+	duration := time.Since(start)
+
+	if hasErrors {
+		err := fmt.Errorf("some triggers failed to drop")
+		if slackErr := m.slack.NotifyTriggerCleanupFailure(taskName, tableName, triggers, err); slackErr != nil {
+			m.logger.Errorf("Failed to send trigger cleanup failure notification: %v", slackErr)
+		}
+		return err
+	}
+
+	if err := m.slack.NotifyTriggerCleanupSuccess(taskName, tableName, triggers, duration); err != nil {
+		m.logger.Errorf("Failed to send trigger cleanup success notification: %v", err)
+	}
+
 	m.logger.Infof("Trigger cleanup completed for table %s", tableName)
 	return nil
-}
-
-func (m *Manager) checkExecutionTimeThreshold(taskName, tableName, query string, duration time.Duration) {
-	thresholdSeconds := m.config.Common.Alert.ExecutionTimeThresholdSeconds
-	if thresholdSeconds <= 0 {
-		return
-	}
-
-	threshold := time.Duration(thresholdSeconds) * time.Second
-	if duration > threshold {
-		warning := fmt.Sprintf("Long execution time detected in %s: %v (threshold: %v) for query: %s",
-			taskName, duration, threshold, query)
-		m.logger.Warn(warning)
-
-		if slackErr := m.slack.NotifyWarning(taskName, tableName, warning); slackErr != nil {
-			m.logger.Errorf("Failed to send execution time warning notification: %v", slackErr)
-		}
-	}
 }
 
 func (m *Manager) checkOtherActiveConnections(taskName, tableName string) error {

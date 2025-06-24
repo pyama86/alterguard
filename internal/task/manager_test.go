@@ -146,6 +146,21 @@ func (m *MockSlackNotifier) NotifyConnectionCheckFailure(taskName, tableName, us
 	return args.Error(0)
 }
 
+func (m *MockSlackNotifier) NotifyTriggerCleanupStart(taskName, tableName string, triggers []string) error {
+	args := m.Called(taskName, tableName, triggers)
+	return args.Error(0)
+}
+
+func (m *MockSlackNotifier) NotifyTriggerCleanupSuccess(taskName, tableName string, triggers []string, duration time.Duration) error {
+	args := m.Called(taskName, tableName, triggers, duration)
+	return args.Error(0)
+}
+
+func (m *MockSlackNotifier) NotifyTriggerCleanupFailure(taskName, tableName string, triggers []string, err error) error {
+	args := m.Called(taskName, tableName, triggers, err)
+	return args.Error(0)
+}
+
 func TestExecuteAllTasks(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -523,31 +538,95 @@ func TestCleanupTable(t *testing.T) {
 }
 
 func TestCleanupTriggers(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.FatalLevel)
-
-	mockDB := &MockDBClient{}
-	mockPtOsc := &MockPtOscExecutor{}
-	mockSlack := &MockSlackNotifier{}
-
-	cfg := &config.Config{}
-	manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
-
-	tableName := "test_table"
-	expectedTriggers := []string{
-		"DROP TRIGGER IF EXISTS pt_osc_test_table_del",
-		"DROP TRIGGER IF EXISTS pt_osc_test_table_upd",
-		"DROP TRIGGER IF EXISTS pt_osc_test_table_ins",
+	tests := []struct {
+		name          string
+		tableName     string
+		dryRun        bool
+		triggerErrors map[string]error
+		expectError   bool
+	}{
+		{
+			name:        "successful cleanup",
+			tableName:   "test_table",
+			dryRun:      false,
+			expectError: false,
+		},
+		{
+			name:        "dry run cleanup",
+			tableName:   "test_table",
+			dryRun:      true,
+			expectError: false,
+		},
+		{
+			name:      "partial failure",
+			tableName: "test_table",
+			dryRun:    false,
+			triggerErrors: map[string]error{
+				"DROP TRIGGER IF EXISTS pt_osc_test_table_del": errors.New("trigger drop failed"),
+			},
+			expectError: true,
+		},
 	}
 
-	for _, trigger := range expectedTriggers {
-		mockDB.On("ExecuteAlter", trigger).Return(nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := logrus.New()
+			logger.SetLevel(logrus.FatalLevel)
+
+			mockDB := &MockDBClient{}
+			mockPtOsc := &MockPtOscExecutor{}
+			mockSlack := &MockSlackNotifier{}
+
+			cfg := &config.Config{}
+			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, tt.dryRun)
+
+			expectedTriggers := []string{
+				"pt_osc_test_table_del",
+				"pt_osc_test_table_upd",
+				"pt_osc_test_table_ins",
+			}
+
+			taskName := "trigger-cleanup"
+			if tt.dryRun {
+				taskName = "trigger-cleanup (DRY RUN)"
+			}
+
+			mockSlack.On("NotifyTriggerCleanupStart", taskName, tt.tableName, expectedTriggers).Return(nil)
+
+			if !tt.dryRun {
+				expectedSQL := []string{
+					"DROP TRIGGER IF EXISTS pt_osc_test_table_del",
+					"DROP TRIGGER IF EXISTS pt_osc_test_table_upd",
+					"DROP TRIGGER IF EXISTS pt_osc_test_table_ins",
+				}
+
+				for _, sql := range expectedSQL {
+					if err, exists := tt.triggerErrors[sql]; exists {
+						mockDB.On("ExecuteAlter", sql).Return(err)
+					} else {
+						mockDB.On("ExecuteAlter", sql).Return(nil)
+					}
+				}
+			}
+
+			if tt.expectError {
+				mockSlack.On("NotifyTriggerCleanupFailure", taskName, tt.tableName, expectedTriggers, mock.Anything).Return(nil)
+			} else {
+				mockSlack.On("NotifyTriggerCleanupSuccess", taskName, tt.tableName, expectedTriggers, mock.Anything).Return(nil)
+			}
+
+			err := manager.CleanupTriggers(tt.tableName)
+
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			mockDB.AssertExpectations(t)
+			mockSlack.AssertExpectations(t)
+		})
 	}
-
-	err := manager.CleanupTriggers(tableName)
-
-	require.NoError(t, err)
-	mockDB.AssertExpectations(t)
 }
 
 func TestPtOscWithNewTableCount(t *testing.T) {

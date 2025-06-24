@@ -1,7 +1,6 @@
 package config
 
 import (
-	"os"
 	"testing"
 )
 
@@ -19,10 +18,7 @@ func TestLoadConfigWithoutTasks(t *testing.T) {
 			commonPath:  "../../examples/config-common.yaml",
 			environment: "test",
 			setupEnv: func() {
-				os.Setenv("DATABASE_DSN", "user:pass@tcp(localhost:3306)/test")
-			},
-			cleanupEnv: func() {
-				os.Unsetenv("DATABASE_DSN")
+				t.Setenv("DATABASE_DSN", "user:pass@tcp(localhost:3306)/test")
 			},
 			wantErr: false,
 		},
@@ -30,19 +26,18 @@ func TestLoadConfigWithoutTasks(t *testing.T) {
 			name:        "missing DSN environment variable",
 			commonPath:  "../../examples/config-common.yaml",
 			environment: "test",
-			setupEnv:    func() {},
-			cleanupEnv:  func() {},
-			wantErr:     true,
+			setupEnv: func() {
+				// Explicitly unset DATABASE_DSN
+				t.Setenv("DATABASE_DSN", "")
+			},
+			wantErr: true,
 		},
 		{
 			name:        "invalid common config path",
 			commonPath:  "nonexistent.yaml",
 			environment: "test",
 			setupEnv: func() {
-				os.Setenv("DATABASE_DSN", "user:pass@tcp(localhost:3306)/test")
-			},
-			cleanupEnv: func() {
-				os.Unsetenv("DATABASE_DSN")
+				t.Setenv("DATABASE_DSN", "user:pass@tcp(localhost:3306)/test")
 			},
 			wantErr: true,
 		},
@@ -51,7 +46,9 @@ func TestLoadConfigWithoutTasks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupEnv()
-			defer tt.cleanupEnv()
+			if tt.cleanupEnv != nil {
+				defer tt.cleanupEnv()
+			}
 
 			cfg, err := LoadConfigWithoutTasks(tt.commonPath, tt.environment)
 			if (err != nil) != tt.wantErr {
@@ -91,12 +88,8 @@ func TestPtOscThresholdEnvironmentVariable(t *testing.T) {
 			envValue:      "5000",
 			expectedValue: 5000,
 			setupEnv: func(value string) {
-				os.Setenv("DATABASE_DSN", "user:pass@tcp(localhost:3306)/test")
-				os.Setenv("PT_OSC_THRESHOLD", value)
-			},
-			cleanupEnv: func() {
-				os.Unsetenv("DATABASE_DSN")
-				os.Unsetenv("PT_OSC_THRESHOLD")
+				t.Setenv("DATABASE_DSN", "user:pass@tcp(localhost:3306)/test")
+				t.Setenv("PT_OSC_THRESHOLD", value)
 			},
 			wantErr: false,
 		},
@@ -105,12 +98,8 @@ func TestPtOscThresholdEnvironmentVariable(t *testing.T) {
 			commonPath: "../../examples/config-common.yaml",
 			envValue:   "invalid",
 			setupEnv: func(value string) {
-				os.Setenv("DATABASE_DSN", "user:pass@tcp(localhost:3306)/test")
-				os.Setenv("PT_OSC_THRESHOLD", value)
-			},
-			cleanupEnv: func() {
-				os.Unsetenv("DATABASE_DSN")
-				os.Unsetenv("PT_OSC_THRESHOLD")
+				t.Setenv("DATABASE_DSN", "user:pass@tcp(localhost:3306)/test")
+				t.Setenv("PT_OSC_THRESHOLD", value)
 			},
 			wantErr: false,
 		},
@@ -119,7 +108,9 @@ func TestPtOscThresholdEnvironmentVariable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupEnv(tt.envValue)
-			defer tt.cleanupEnv()
+			if tt.cleanupEnv != nil {
+				defer tt.cleanupEnv()
+			}
 
 			cfg, err := LoadConfigWithoutTasks(tt.commonPath, "test")
 			if (err != nil) != tt.wantErr {

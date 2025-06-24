@@ -22,6 +22,9 @@ type Notifier interface {
 	NotifyPtOscCompletionWithNewTableCount(taskName, tableName string, originalRowCount, newRowCount int64, duration time.Duration, ptOscLog string) error
 	NotifyDryRunResult(taskName, tableName string, result *DryRunResult, duration time.Duration) error
 	NotifyConnectionCheckFailure(taskName, tableName, username string) error
+	NotifyTriggerCleanupStart(taskName, tableName string, triggers []string) error
+	NotifyTriggerCleanupSuccess(taskName, tableName string, triggers []string, duration time.Duration) error
+	NotifyTriggerCleanupFailure(taskName, tableName string, triggers []string, err error) error
 }
 
 type DryRunResult struct {
@@ -192,6 +195,30 @@ func (n *SlackNotifier) NotifyConnectionCheckFailure(taskName, tableName, userna
 		title, taskName, tableName, username)
 
 	return n.sendMessage(message, "warning")
+}
+
+func (n *SlackNotifier) NotifyTriggerCleanupStart(taskName, tableName string, triggers []string) error {
+	title := n.formatTitle("🗑️ Trigger cleanup started")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nTriggers: %v",
+		title, taskName, tableName, triggers)
+
+	return n.sendMessage(message, "good")
+}
+
+func (n *SlackNotifier) NotifyTriggerCleanupSuccess(taskName, tableName string, triggers []string, duration time.Duration) error {
+	title := n.formatTitle("✅ Trigger cleanup completed successfully")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nTriggers: %v\nDuration: %s",
+		title, taskName, tableName, triggers, duration.String())
+
+	return n.sendMessage(message, "good")
+}
+
+func (n *SlackNotifier) NotifyTriggerCleanupFailure(taskName, tableName string, triggers []string, err error) error {
+	title := n.formatTitle("❌ Trigger cleanup failed")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nTriggers: %v\nError: %s",
+		title, taskName, tableName, triggers, err.Error())
+
+	return n.sendMessage(message, "danger")
 }
 
 func (n *SlackNotifier) sendMessage(text, color string) error {
