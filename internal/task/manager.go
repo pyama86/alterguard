@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -479,24 +480,6 @@ func (m *Manager) SwapTable(tableName string) error {
 		return fmt.Errorf("failed to set session config: %w", err)
 	}
 
-	lockDetected, err := m.db.CheckMetadataLock(tableName, m.config.Common.Alert.MetadataLockThresholdSeconds)
-	if err != nil {
-		if slackErr := m.slack.NotifyFailureWithQuery(taskName, tableName, quotedQuery, 0, err); slackErr != nil {
-			m.logger.Errorf("Failed to send failure notification: %v", slackErr)
-		}
-		return fmt.Errorf("failed to check metadata lock: %w", err)
-	}
-
-	if lockDetected {
-		warning := fmt.Sprintf("Metadata lock detected for table %s (threshold: %d seconds)",
-			tableName, m.config.Common.Alert.MetadataLockThresholdSeconds)
-		m.logger.Warn(warning)
-
-		if err := m.slack.NotifyWarning("swap", tableName, warning); err != nil {
-			m.logger.Errorf("Failed to send warning notification: %v", err)
-		}
-	}
-
 	if m.dryRun {
 		m.logger.Infof("[DRY RUN] Would execute SQL: %s", swapSQL)
 		duration := time.Since(start)
@@ -504,6 +487,29 @@ func (m *Manager) SwapTable(tableName string) error {
 			m.logger.Errorf("Failed to send success notification: %v", err)
 		}
 		return nil
+	}
+
+	// Start concurrent execution time monitoring
+	thresholdSeconds := m.config.Common.Alert.ExecutionTimeThresholdSeconds
+	if thresholdSeconds > 0 {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		go func() {
+			timer := time.NewTimer(time.Duration(thresholdSeconds) * time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				warning := fmt.Sprintf("Long execution time detected in %s: operation is taking longer than %d seconds for query: %s",
+					taskName, thresholdSeconds, quotedQuery)
+				m.logger.Warn(warning)
+				if slackErr := m.slack.NotifyWarning(taskName, tableName, warning); slackErr != nil {
+					m.logger.Errorf("Failed to send execution time warning notification: %v", slackErr)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}()
 	}
 
 	if err := m.db.ExecuteAlter(swapSQL); err != nil {
@@ -514,6 +520,7 @@ func (m *Manager) SwapTable(tableName string) error {
 	}
 
 	duration := time.Since(start)
+
 	if err := m.slack.NotifySuccessWithQuery(taskName, tableName, quotedQuery, 0, duration); err != nil {
 		m.logger.Errorf("Failed to send success notification: %v", err)
 	}
@@ -589,6 +596,24 @@ func (m *Manager) CleanupTriggers(tableName string) error {
 
 	m.logger.Infof("Trigger cleanup completed for table %s", tableName)
 	return nil
+}
+
+func (m *Manager) checkExecutionTimeThreshold(taskName, tableName, query string, duration time.Duration) {
+	thresholdSeconds := m.config.Common.Alert.ExecutionTimeThresholdSeconds
+	if thresholdSeconds <= 0 {
+		return
+	}
+
+	threshold := time.Duration(thresholdSeconds) * time.Second
+	if duration > threshold {
+		warning := fmt.Sprintf("Long execution time detected in %s: %v (threshold: %v) for query: %s",
+			taskName, duration, threshold, query)
+		m.logger.Warn(warning)
+
+		if slackErr := m.slack.NotifyWarning(taskName, tableName, warning); slackErr != nil {
+			m.logger.Errorf("Failed to send execution time warning notification: %v", slackErr)
+		}
+	}
 }
 
 func (m *Manager) checkOtherActiveConnections(taskName, tableName string) error {

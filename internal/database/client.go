@@ -16,7 +16,6 @@ type Client interface {
 	GetNewTableRowCount(tableName string) (int64, error)
 	ExecuteAlter(alterStatement string) error
 	ExecuteAlterWithDryRun(alterStatement string, dryRun bool) error
-	CheckMetadataLock(table string, thresholdSeconds int) (bool, error)
 	SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error
 	TableExists(tableName string) (bool, error)
 	HasOtherActiveConnections() (bool, string, error)
@@ -105,33 +104,6 @@ func (c *MySQLClient) ExecuteAlterWithDryRun(alterStatement string, dryRun bool)
 		return nil
 	}
 	return c.ExecuteAlter(alterStatement)
-}
-
-func (c *MySQLClient) CheckMetadataLock(table string, thresholdSeconds int) (bool, error) {
-	var lockCount int
-	query := `
-		SELECT COUNT(*)
-		FROM performance_schema.metadata_locks
-		WHERE object_name = ?
-		AND lock_duration = 'TRANSACTION'
-		AND lock_status = 'PENDING'
-	`
-
-	start := time.Now()
-	for time.Since(start) < time.Duration(thresholdSeconds)*time.Second {
-		err := c.db.Get(&lockCount, query, table)
-		if err != nil {
-			return false, fmt.Errorf("failed to check metadata lock for %s: %w", table, err)
-		}
-
-		if lockCount == 0 {
-			return false, nil
-		}
-
-		time.Sleep(1 * time.Second)
-	}
-
-	return true, nil
 }
 
 func (c *MySQLClient) SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error {

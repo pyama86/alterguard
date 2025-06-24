@@ -32,7 +32,7 @@ type PtOscConfig struct {
 }
 
 type AlertConfig struct {
-	MetadataLockThresholdSeconds int `yaml:"metadata_lock_threshold_seconds"`
+	ExecutionTimeThresholdSeconds int `yaml:"execution_time_threshold_seconds"`
 }
 
 type SessionConfig struct {

@@ -3,6 +3,7 @@ package task
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,11 +38,6 @@ func (m *MockDBClient) ExecuteAlter(alterStatement string) error {
 func (m *MockDBClient) ExecuteAlterWithDryRun(alterStatement string, dryRun bool) error {
 	args := m.Called(alterStatement, dryRun)
 	return args.Error(0)
-}
-
-func (m *MockDBClient) CheckMetadataLock(table string, thresholdSeconds int) (bool, error) {
-	args := m.Called(table, thresholdSeconds)
-	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockDBClient) SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error {
@@ -329,29 +325,17 @@ func TestSwapTable(t *testing.T) {
 		originalTableExists bool
 		newTableExists      bool
 		tableExistsError    error
-		lockDetected        bool
-		lockCheckError      error
 		swapError           error
 		expectError         bool
+		executionThreshold  int
 		expectWarning       bool
 	}{
 		{
-			name:                "successful swap without lock",
+			name:                "successful swap",
 			tableName:           "test_table",
 			originalTableExists: true,
 			newTableExists:      true,
-			lockDetected:        false,
 			expectError:         false,
-			expectWarning:       false,
-		},
-		{
-			name:                "successful swap with lock warning",
-			tableName:           "test_table",
-			originalTableExists: true,
-			newTableExists:      true,
-			lockDetected:        true,
-			expectError:         false,
-			expectWarning:       true,
 		},
 		{
 			name:                "original table does not exist",
@@ -374,19 +358,10 @@ func TestSwapTable(t *testing.T) {
 			expectError:      true,
 		},
 		{
-			name:                "lock check error",
-			tableName:           "test_table",
-			originalTableExists: true,
-			newTableExists:      true,
-			lockCheckError:      errors.New("lock check failed"),
-			expectError:         true,
-		},
-		{
 			name:                "swap error",
 			tableName:           "test_table",
 			originalTableExists: true,
 			newTableExists:      true,
-			lockDetected:        false,
 			swapError:           errors.New("swap failed"),
 			expectError:         true,
 		},
@@ -395,9 +370,16 @@ func TestSwapTable(t *testing.T) {
 			tableName:           "test_table",
 			originalTableExists: true,
 			newTableExists:      true,
-			lockDetected:        false,
 			expectError:         false,
-			expectWarning:       false,
+		},
+		{
+			name:                "execution time threshold exceeded",
+			tableName:           "test_table",
+			originalTableExists: true,
+			newTableExists:      true,
+			expectError:         false,
+			executionThreshold:  1,
+			expectWarning:       true,
 		},
 	}
 
@@ -413,7 +395,7 @@ func TestSwapTable(t *testing.T) {
 			cfg := &config.Config{
 				Common: config.CommonConfig{
 					Alert: config.AlertConfig{
-						MetadataLockThresholdSeconds: 30,
+						ExecutionTimeThresholdSeconds: tt.executionThreshold,
 					},
 					SessionConfig: config.SessionConfig{
 						LockWaitTimeout:       0,
@@ -453,25 +435,24 @@ func TestSwapTable(t *testing.T) {
 
 			mockDB.On("SetSessionConfig", 0, 0).Return(nil)
 
-			if tt.lockCheckError != nil {
-				mockDB.On("CheckMetadataLock", tt.tableName, 30).Return(false, tt.lockCheckError)
-				mockSlack.On("NotifyFailureWithQuery", taskName, tt.tableName, expectedQuery, int64(0), tt.lockCheckError).Return(nil)
+			if tt.swapError != nil {
+				mockDB.On("ExecuteAlter", mock.AnythingOfType("string")).Return(tt.swapError)
+				mockSlack.On("NotifyFailureWithQuery", taskName, tt.tableName, expectedQuery, int64(0), tt.swapError).Return(nil)
 			} else {
-				mockDB.On("CheckMetadataLock", tt.tableName, 30).Return(tt.lockDetected, nil)
-
-				if tt.expectWarning {
-					mockSlack.On("NotifyWarning", "swap", tt.tableName, mock.AnythingOfType("string")).Return(nil)
-				}
-
-				if tt.swapError != nil {
-					mockDB.On("ExecuteAlter", mock.AnythingOfType("string")).Return(tt.swapError)
-					mockSlack.On("NotifyFailureWithQuery", taskName, tt.tableName, expectedQuery, int64(0), tt.swapError).Return(nil)
-				} else {
-					if !isDryRun {
+				if !isDryRun {
+					if tt.expectWarning {
+						// ExecuteAlterを2秒間ブロックして、concurrent monitoringをテスト
+						mockDB.On("ExecuteAlter", mock.AnythingOfType("string")).Run(func(args mock.Arguments) {
+							time.Sleep(2 * time.Second) // 2秒待機してthresholdを超える
+						}).Return(nil)
+						mockSlack.On("NotifyWarning", taskName, tt.tableName, mock.MatchedBy(func(msg string) bool {
+							return strings.Contains(msg, "Long execution time detected")
+						})).Return(nil)
+					} else {
 						mockDB.On("ExecuteAlter", mock.AnythingOfType("string")).Return(nil)
 					}
-					mockSlack.On("NotifySuccessWithQuery", taskName, tt.tableName, expectedQuery, int64(0), mock.Anything).Return(nil)
 				}
+				mockSlack.On("NotifySuccessWithQuery", taskName, tt.tableName, expectedQuery, int64(0), mock.Anything).Return(nil)
 			}
 
 			err := manager.SwapTable(tt.tableName)
@@ -604,6 +585,65 @@ func TestPtOscWithNewTableCount(t *testing.T) {
 	require.NoError(t, err)
 	mockDB.AssertExpectations(t)
 	mockPtOsc.AssertExpectations(t)
+	mockSlack.AssertExpectations(t)
+}
+
+func TestSwapTableConcurrentMonitoring(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	mockDB := &MockDBClient{}
+	mockPtOsc := &MockPtOscExecutor{}
+	mockSlack := &MockSlackNotifier{}
+
+	cfg := &config.Config{
+		Common: config.CommonConfig{
+			Alert: config.AlertConfig{
+				ExecutionTimeThresholdSeconds: 1, // 1秒でタイムアウト
+			},
+			SessionConfig: config.SessionConfig{
+				LockWaitTimeout:       0,
+				InnodbLockWaitTimeout: 0,
+			},
+		},
+	}
+
+	manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+
+	tableName := "test_table"
+	expectedQuery := fmt.Sprintf("`RENAME TABLE %s TO %s_old, _%s_new TO %s`", tableName, tableName, tableName, tableName)
+
+	// テーブル存在確認のモック設定
+	mockDB.On("TableExists", tableName).Return(true, nil)
+	newTableName := fmt.Sprintf("_%s_new", tableName)
+	mockDB.On("TableExists", newTableName).Return(true, nil)
+
+	mockSlack.On("NotifyStartWithQuery", "swap", tableName, expectedQuery, int64(0)).Return(nil)
+	mockDB.On("SetSessionConfig", 0, 0).Return(nil)
+
+	// ExecuteAlterを2秒間ブロックして、concurrent monitoringをテスト
+	mockDB.On("ExecuteAlter", mock.AnythingOfType("string")).Run(func(args mock.Arguments) {
+		time.Sleep(2 * time.Second) // 2秒待機してthresholdを超える
+	}).Return(nil)
+
+	// 警告通知が呼ばれることを期待
+	mockSlack.On("NotifyWarning", "swap", tableName, mock.MatchedBy(func(msg string) bool {
+		return strings.Contains(msg, "Long execution time detected") && strings.Contains(msg, "operation is taking longer than 1 seconds")
+	})).Return(nil)
+
+	mockSlack.On("NotifySuccessWithQuery", "swap", tableName, expectedQuery, int64(0), mock.Anything).Return(nil)
+
+	start := time.Now()
+	err := manager.SwapTable(tableName)
+	duration := time.Since(start)
+
+	assert.NoError(t, err)
+	assert.True(t, duration >= 2*time.Second, "Test should take at least 2 seconds to verify concurrent monitoring")
+
+	// 少し待ってからアサーションを実行（goroutineが完了するのを待つ）
+	time.Sleep(100 * time.Millisecond)
+
+	mockDB.AssertExpectations(t)
 	mockSlack.AssertExpectations(t)
 }
 
