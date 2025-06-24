@@ -126,6 +126,19 @@ func (c *MySQLClient) CheckMetadataLock(table string, thresholdSeconds int) (boo
 }
 
 func (c *MySQLClient) SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error {
+	query := "SET @@session.information_schema_stats_expiry = 0"
+	c.logger.Infof("Executing SQL: %s", query)
+	start := time.Now()
+
+	if _, err := c.db.Exec(query); err != nil {
+		duration := time.Since(start)
+		c.logger.Errorf("SQL execution failed (duration: %v): %s - Error: %v", duration, query, err)
+		return fmt.Errorf("failed to set information_schema_stats_expiry: %w", err)
+	}
+
+	duration := time.Since(start)
+	c.logger.Infof("SQL execution completed (duration: %v): %s", duration, query)
+
 	if lockWaitTimeout > 0 {
 		query := fmt.Sprintf("SET SESSION lock_wait_timeout = %d", lockWaitTimeout)
 		c.logger.Infof("Executing SQL: %s", query)
