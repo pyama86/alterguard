@@ -2,8 +2,10 @@ package database
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -43,53 +45,106 @@ func (m *MockResult) RowsAffected() (int64, error) {
 	return ret.Get(0).(int64), ret.Error(1)
 }
 
+type MockLogger struct {
+	mock.Mock
+}
+
+func (m *MockLogger) Debugf(format string, args ...interface{}) {
+	m.Called(format, args)
+}
+
+func (m *MockLogger) Infof(format string, args ...interface{}) {
+	m.Called(format, args)
+}
+
+func (m *MockLogger) Warnf(format string, args ...interface{}) {
+	m.Called(format, args)
+}
+
+func (m *MockLogger) Errorf(format string, args ...interface{}) {
+	m.Called(format, args)
+}
+
 func TestGetTableRowCount(t *testing.T) {
 	tests := []struct {
-		name        string
-		table       string
-		mockReturn  any
-		mockError   error
-		expectCount int64
-		expectError bool
+		name           string
+		table          string
+		innodbReturn   any
+		innodbError    error
+		countReturn    any
+		countError     error
+		expectCount    int64
+		expectError    bool
+		expectFallback bool
 	}{
 		{
-			name:        "successful count",
-			table:       "users",
-			mockReturn:  int64(1000),
-			mockError:   nil,
-			expectCount: 1000,
-			expectError: false,
+			name:           "successful innodb count",
+			table:          "users",
+			innodbReturn:   int64(1000),
+			innodbError:    nil,
+			expectCount:    1000,
+			expectError:    false,
+			expectFallback: false,
 		},
 		{
-			name:        "table not found",
-			table:       "nonexistent",
-			mockReturn:  nil,
-			mockError:   sql.ErrNoRows,
-			expectCount: 0,
-			expectError: true,
+			name:           "innodb fails, count succeeds",
+			table:          "users",
+			innodbReturn:   nil,
+			innodbError:    sql.ErrNoRows,
+			countReturn:    int64(500),
+			countError:     nil,
+			expectCount:    500,
+			expectError:    false,
+			expectFallback: true,
 		},
 		{
-			name:        "database error",
-			table:       "users",
-			mockReturn:  nil,
-			mockError:   assert.AnError,
-			expectCount: 0,
-			expectError: true,
+			name:           "both fail",
+			table:          "nonexistent",
+			innodbReturn:   nil,
+			innodbError:    sql.ErrNoRows,
+			countReturn:    nil,
+			countError:     assert.AnError,
+			expectCount:    0,
+			expectError:    true,
+			expectFallback: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockDB := &MockDB{}
-			client := &MySQLClient{db: nil}
+			logger := logrus.New()
+			logger.SetLevel(logrus.PanicLevel)
+			client := &MySQLClient{db: nil, logger: logger}
 
-			if tt.mockError != nil {
-				mockDB.On("Get", mock.Anything, mock.AnythingOfType("string"), tt.table).Return(tt.mockError)
+			// INNODB_SYS_TABLESTATSクエリのモック設定
+			if tt.innodbError != nil {
+				mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+					return strings.Contains(query, "INNODB_SYS_TABLESTATS")
+				}), tt.table).Return(tt.innodbError)
 			} else {
-				mockDB.On("Get", mock.Anything, mock.AnythingOfType("string"), tt.table).Run(func(args mock.Arguments) {
+				mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+					return strings.Contains(query, "INNODB_SYS_TABLESTATS")
+				}), tt.table).Run(func(args mock.Arguments) {
 					dest := args.Get(0).(*int64)
-					*dest = tt.mockReturn.(int64)
+					*dest = tt.innodbReturn.(int64)
 				}).Return(nil)
+			}
+
+			// フォールバック用のCOUNT(*)クエリのモック設定
+			if tt.expectFallback {
+				if tt.countError != nil {
+					mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+						return strings.Contains(query, "COUNT(*)")
+					})).Return(tt.countError)
+				} else {
+					mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+						return strings.Contains(query, "COUNT(*)")
+					})).Run(func(args mock.Arguments) {
+						dest := args.Get(0).(*int64)
+						*dest = tt.countReturn.(int64)
+					}).Return(nil)
+				}
 			}
 
 			count, err := client.getTableRowCountWithDB(mockDB, tt.table)

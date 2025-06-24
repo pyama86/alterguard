@@ -53,18 +53,27 @@ func NewMySQLClient(dsn string, logger *logrus.Logger) (*MySQLClient, error) {
 
 func (c *MySQLClient) GetTableRowCount(table string) (int64, error) {
 	var count int64
+
+	// 第一選択: INNODB_SYS_TABLESTATS
 	query := `
-		SELECT table_rows
-		FROM information_schema.TABLES
-		WHERE table_schema = DATABASE() AND table_name = ?
+		SELECT NUM_ROWS
+		FROM information_schema.INNODB_SYS_TABLESTATS
+		WHERE NAME = CONCAT(DATABASE(), '/', ?)
 	`
 
 	err := c.db.Get(&count, query, table)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return 0, fmt.Errorf("table not found: %s", table)
+		// フォールバック: COUNT(*)
+		c.logger.Warnf("Failed to get row count from INNODB_SYS_TABLESTATS for %s, falling back to COUNT(*): %v", table, err)
+
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
+		err = c.db.Get(&count, countQuery)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get table row count for %s: %w", table, err)
 		}
-		return 0, fmt.Errorf("failed to get table row count for %s: %w", table, err)
+		c.logger.Infof("Used COUNT(*) for table %s: %d rows", table, count)
+	} else {
+		c.logger.Debugf("Used INNODB_SYS_TABLESTATS for table %s: %d rows", table, count)
 	}
 
 	return count, nil
@@ -126,19 +135,6 @@ func (c *MySQLClient) CheckMetadataLock(table string, thresholdSeconds int) (boo
 }
 
 func (c *MySQLClient) SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error {
-	query := "SET @@session.information_schema_stats_expiry = 0"
-	c.logger.Infof("Executing SQL: %s", query)
-	start := time.Now()
-
-	if _, err := c.db.Exec(query); err != nil {
-		duration := time.Since(start)
-		c.logger.Errorf("SQL execution failed (duration: %v): %s - Error: %v", duration, query, err)
-		return fmt.Errorf("failed to set information_schema_stats_expiry: %w", err)
-	}
-
-	duration := time.Since(start)
-	c.logger.Infof("SQL execution completed (duration: %v): %s", duration, query)
-
 	if lockWaitTimeout > 0 {
 		query := fmt.Sprintf("SET SESSION lock_wait_timeout = %d", lockWaitTimeout)
 		c.logger.Infof("Executing SQL: %s", query)
@@ -244,18 +240,27 @@ type DBExecutor interface {
 
 func (c *MySQLClient) getTableRowCountWithDB(db DBExecutor, table string) (int64, error) {
 	var count int64
+
+	// 第一選択: INNODB_SYS_TABLESTATS
 	query := `
-		SELECT table_rows
-		FROM information_schema.TABLES
-		WHERE table_schema = DATABASE() AND table_name = ?
+		SELECT NUM_ROWS
+		FROM information_schema.INNODB_SYS_TABLESTATS
+		WHERE NAME = CONCAT(DATABASE(), '/', ?)
 	`
 
 	err := db.Get(&count, query, table)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return 0, fmt.Errorf("table not found: %s", table)
+		// フォールバック: COUNT(*)
+		c.logger.Warnf("Failed to get row count from INNODB_SYS_TABLESTATS for %s, falling back to COUNT(*): %v", table, err)
+
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
+		err = db.Get(&count, countQuery)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get table row count for %s: %w", table, err)
 		}
-		return 0, fmt.Errorf("failed to get table row count for %s: %w", table, err)
+		c.logger.Infof("Used COUNT(*) for table %s: %d rows", table, count)
+	} else {
+		c.logger.Debugf("Used INNODB_SYS_TABLESTATS for table %s: %d rows", table, count)
 	}
 
 	return count, nil
