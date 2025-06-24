@@ -1,11 +1,45 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
+
+// JSTFormatter は日本時間でログを出力するカスタムフォーマッター
+type JSTFormatter struct {
+	logrus.TextFormatter
+}
+
+// Format は日本時間でフォーマットされたログエントリを返す
+func (f *JSTFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	// 日本時間のタイムゾーンを取得
+	jst, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		jst = time.FixedZone("JST", 9*60*60) // フォールバック
+	}
+
+	// エントリの時刻を日本時間に変換
+	timestamp := entry.Time.In(jst).Format("2006/01/02 15:04:05 JST")
+
+	// ログレベルを大文字で表示
+	level := fmt.Sprintf("[%s]", entry.Level.String())
+
+	// メッセージをフォーマット
+	message := fmt.Sprintf("%s %s %s", timestamp, level, entry.Message)
+
+	// フィールドがある場合は追加
+	if len(entry.Data) > 0 {
+		for key, value := range entry.Data {
+			message += fmt.Sprintf(" %s=%v", key, value)
+		}
+	}
+
+	return []byte(message + "\n"), nil
+}
 
 var (
 	commonConfigPath string
@@ -53,7 +87,7 @@ func init() {
 
 func setupLogger() {
 	logger = logrus.New()
-	logger.SetFormatter(&logrus.JSONFormatter{})
+	logger.SetFormatter(&JSTFormatter{})
 	logger.SetLevel(logrus.InfoLevel)
 
 	if os.Getenv("DEBUG") == "true" {
