@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -17,6 +18,8 @@ type Client interface {
 	CheckMetadataLock(table string, thresholdSeconds int) (bool, error)
 	SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error
 	TableExists(tableName string) (bool, error)
+	HasOtherActiveConnections() (bool, string, error)
+	GetCurrentUser() (string, error)
 	Close() error
 }
 
@@ -164,6 +167,48 @@ func (c *MySQLClient) TableExists(tableName string) (bool, error) {
 	}
 
 	return count > 0, nil
+}
+
+func (c *MySQLClient) HasOtherActiveConnections() (bool, string, error) {
+	currentUser, err := c.GetCurrentUser()
+	if err != nil {
+		return false, "", fmt.Errorf("failed to get current user: %w", err)
+	}
+
+	var currentConnectionID int64
+	err = c.db.Get(&currentConnectionID, "SELECT CONNECTION_ID()")
+	if err != nil {
+		return false, currentUser, fmt.Errorf("failed to get current connection ID: %w", err)
+	}
+
+	var otherConnections int
+	query := `
+		SELECT COUNT(*)
+		FROM information_schema.PROCESSLIST
+		WHERE USER = ? AND ID != ?
+	`
+
+	err = c.db.Get(&otherConnections, query, currentUser, currentConnectionID)
+	if err != nil {
+		return false, currentUser, fmt.Errorf("failed to check other active connections: %w", err)
+	}
+
+	return otherConnections > 0, currentUser, nil
+}
+
+func (c *MySQLClient) GetCurrentUser() (string, error) {
+	var user string
+	err := c.db.Get(&user, "SELECT USER()")
+	if err != nil {
+		return "", fmt.Errorf("failed to get current user: %w", err)
+	}
+
+	// USER()は'user@host'形式で返すので、@より前の部分を取得
+	if idx := strings.Index(user, "@"); idx != -1 {
+		user = user[:idx]
+	}
+
+	return user, nil
 }
 
 func (c *MySQLClient) Close() error {

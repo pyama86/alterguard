@@ -158,6 +158,15 @@ func (m *Manager) executeTableGroup(tableName string, group *TableGroup) error {
 }
 
 func (m *Manager) executeAlterPartsAsSmallQueries(tableName string, alterParts []string) error {
+	taskName := "alter-table"
+	if m.dryRun {
+		taskName = "alter-table (DRY RUN)"
+	}
+
+	if err := m.checkOtherActiveConnections(taskName, tableName); err != nil {
+		return err
+	}
+
 	rowCount, err := m.db.GetTableRowCount(tableName)
 	if err != nil {
 		m.logger.Warnf("Failed to get row count for table %s: %v", tableName, err)
@@ -166,11 +175,6 @@ func (m *Manager) executeAlterPartsAsSmallQueries(tableName string, alterParts [
 
 	cleanedQuery := strings.ReplaceAll(fmt.Sprintf("ALTER TABLE %s %s", tableName, strings.Join(alterParts, ", ")), "`", "")
 	combinedQuery := fmt.Sprintf("`%s`", cleanedQuery)
-
-	taskName := "alter-table"
-	if m.dryRun {
-		taskName = "alter-table (DRY RUN)"
-	}
 
 	if err := m.slack.NotifyStartWithQuery(taskName, tableName, combinedQuery, rowCount); err != nil {
 		m.logger.Errorf("Failed to send start notification: %v", err)
@@ -201,6 +205,15 @@ func (m *Manager) executeAlterPartsAsSmallQueries(tableName string, alterParts [
 }
 
 func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, rowCount int64) error {
+	taskName := "pt-osc"
+	if m.dryRun {
+		taskName = "pt-osc (DRY RUN)"
+	}
+
+	if err := m.checkOtherActiveConnections(taskName, tableName); err != nil {
+		return err
+	}
+
 	combinedAlter := strings.Join(alterParts, ", ")
 	cleanedAlterQuery := strings.ReplaceAll(fmt.Sprintf("ALTER TABLE %s %s", tableName, combinedAlter), "`", "")
 	alterQuery := fmt.Sprintf("`%s`", cleanedAlterQuery)
@@ -224,11 +237,6 @@ func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, 
 	}
 
 	queryInfo := fmt.Sprintf("ALTER: %s\npt-osc: %s", alterQuery, ptOscCommand)
-
-	taskName := "pt-osc"
-	if m.dryRun {
-		taskName = "pt-osc (DRY RUN)"
-	}
 
 	m.logger.Infof("Executing pt-online-schema-change for table %s (rows: %d)", tableName, rowCount)
 
@@ -412,6 +420,15 @@ func (m *Manager) extractAlterStatement(query string) string {
 func (m *Manager) SwapTable(tableName string) error {
 	m.logger.Infof("Starting table swap for %s", tableName)
 
+	taskName := "swap"
+	if m.dryRun {
+		taskName = "swap (DRY RUN)"
+	}
+
+	if err := m.checkOtherActiveConnections(taskName, tableName); err != nil {
+		return err
+	}
+
 	originalTableExists, err := m.db.TableExists(tableName)
 	if err != nil {
 		m.logger.Errorf("Failed to check original table existence: %v", err)
@@ -437,11 +454,6 @@ func (m *Manager) SwapTable(tableName string) error {
 		tableName, tableName, tableName, tableName)
 	cleanedQuery := strings.ReplaceAll(swapSQL, "`", "")
 	quotedQuery := fmt.Sprintf("`%s`", cleanedQuery)
-
-	taskName := "swap"
-	if m.dryRun {
-		taskName = "swap (DRY RUN)"
-	}
 
 	if err := m.slack.NotifyStartWithQuery(taskName, tableName, quotedQuery, 0); err != nil {
 		m.logger.Errorf("Failed to send start notification: %v", err)
@@ -566,5 +578,29 @@ func (m *Manager) CleanupTriggers(tableName string) error {
 	}
 
 	m.logger.Infof("Trigger cleanup completed for table %s", tableName)
+	return nil
+}
+
+func (m *Manager) checkOtherActiveConnections(taskName, tableName string) error {
+	if !m.config.Common.ConnectionCheck.Enabled {
+		return nil
+	}
+
+	hasOthers, username, err := m.db.HasOtherActiveConnections()
+	if err != nil {
+		return fmt.Errorf("failed to check active connections: %w", err)
+	}
+
+	if hasOthers {
+		errMsg := fmt.Sprintf("detected other active connections for user '%s', stopping execution for safety", username)
+		m.logger.Warn(errMsg)
+
+		if slackErr := m.slack.NotifyConnectionCheckFailure(taskName, tableName, username); slackErr != nil {
+			m.logger.Errorf("Failed to send connection check failure notification: %v", slackErr)
+		}
+
+		return fmt.Errorf("%s", errMsg)
+	}
+
 	return nil
 }

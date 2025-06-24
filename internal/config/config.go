@@ -10,10 +10,11 @@ import (
 )
 
 type CommonConfig struct {
-	PtOsc          PtOscConfig   `yaml:"pt_osc"`
-	Alert          AlertConfig   `yaml:"alert"`
-	PtOscThreshold int64         `yaml:"pt_osc_threshold"`
-	SessionConfig  SessionConfig `yaml:"session_config"`
+	PtOsc           PtOscConfig           `yaml:"pt_osc"`
+	Alert           AlertConfig           `yaml:"alert"`
+	PtOscThreshold  int64                 `yaml:"pt_osc_threshold"`
+	SessionConfig   SessionConfig         `yaml:"session_config"`
+	ConnectionCheck ConnectionCheckConfig `yaml:"connection_check"`
 }
 
 type PtOscConfig struct {
@@ -36,6 +37,10 @@ type AlertConfig struct {
 type SessionConfig struct {
 	LockWaitTimeout       int `yaml:"lock_wait_timeout"`
 	InnodbLockWaitTimeout int `yaml:"innodb_lock_wait_timeout"`
+}
+
+type ConnectionCheckConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type Config struct {
@@ -148,7 +153,18 @@ func loadCommonConfig(path string) (*CommonConfig, error) {
 		return nil, fmt.Errorf("failed to parse YAML [%s]: %w", path, err)
 	}
 
+	// デフォルト値を設定（YAMLで明示的にfalseが設定されていない限りtrueにする）
+	if !isConnectionCheckExplicitlyDisabled(data) {
+		config.ConnectionCheck.Enabled = true
+	}
+
 	return &config, nil
+}
+
+func isConnectionCheckExplicitlyDisabled(data []byte) bool {
+	content := string(data)
+	return strings.Contains(content, "connection_check:") &&
+		(strings.Contains(content, "enabled: false") || strings.Contains(content, "enabled:false"))
 }
 
 func loadQueriesConfig(path string) ([]string, error) {

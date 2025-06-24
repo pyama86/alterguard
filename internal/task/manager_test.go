@@ -49,6 +49,16 @@ func (m *MockDBClient) TableExists(tableName string) (bool, error) {
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockDBClient) HasOtherActiveConnections() (bool, string, error) {
+	args := m.Called()
+	return args.Bool(0), args.String(1), args.Error(2)
+}
+
+func (m *MockDBClient) GetCurrentUser() (string, error) {
+	args := m.Called()
+	return args.String(0), args.Error(1)
+}
+
 func (m *MockDBClient) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -122,6 +132,11 @@ func (m *MockSlackNotifier) NotifyFailureWithQueryAndLog(taskName, tableName, qu
 
 func (m *MockSlackNotifier) NotifyDryRunResult(taskName, tableName string, result *slack.DryRunResult, duration time.Duration) error {
 	args := m.Called(taskName, tableName, result, duration)
+	return args.Error(0)
+}
+
+func (m *MockSlackNotifier) NotifyConnectionCheckFailure(taskName, tableName, username string) error {
+	args := m.Called(taskName, tableName, username)
 	return args.Error(0)
 }
 
@@ -272,6 +287,9 @@ func TestExecuteAllTasks(t *testing.T) {
 				Common: config.CommonConfig{
 					PtOsc:          config.PtOscConfig{},
 					PtOscThreshold: 1000,
+					ConnectionCheck: config.ConnectionCheckConfig{
+						Enabled: false, // テストでは無効にする
+					},
 				},
 				DSN: "test-dsn",
 			}
@@ -538,4 +556,107 @@ func TestCleanupTriggers(t *testing.T) {
 
 	require.NoError(t, err)
 	mockDB.AssertExpectations(t)
+}
+
+func TestConnectionCheck(t *testing.T) {
+	tests := []struct {
+		name                   string
+		connectionCheckEnabled bool
+		hasOtherConnections    bool
+		connectionCheckError   error
+		username               string
+		expectError            bool
+		expectNotification     bool
+	}{
+		{
+			name:                   "connection check disabled",
+			connectionCheckEnabled: false,
+			hasOtherConnections:    true,
+			username:               "testuser",
+			expectError:            false,
+			expectNotification:     false,
+		},
+		{
+			name:                   "no other connections",
+			connectionCheckEnabled: true,
+			hasOtherConnections:    false,
+			username:               "testuser",
+			expectError:            false,
+			expectNotification:     false,
+		},
+		{
+			name:                   "other connections detected",
+			connectionCheckEnabled: true,
+			hasOtherConnections:    true,
+			username:               "testuser",
+			expectError:            true,
+			expectNotification:     true,
+		},
+		{
+			name:                   "connection check error",
+			connectionCheckEnabled: true,
+			connectionCheckError:   errors.New("connection check failed"),
+			username:               "testuser",
+			expectError:            true,
+			expectNotification:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := logrus.New()
+			logger.SetLevel(logrus.FatalLevel)
+
+			mockDB := &MockDBClient{}
+			mockPtOsc := &MockPtOscExecutor{}
+			mockSlack := &MockSlackNotifier{}
+
+			cfg := &config.Config{
+				Queries: []string{"ALTER TABLE test_table ADD COLUMN foo INT"},
+				Common: config.CommonConfig{
+					PtOsc:          config.PtOscConfig{},
+					PtOscThreshold: 1000,
+					ConnectionCheck: config.ConnectionCheckConfig{
+						Enabled: tt.connectionCheckEnabled,
+					},
+				},
+				DSN: "test-dsn",
+			}
+
+			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+
+			// 接続チェックが有効な場合のモック設定
+			if tt.connectionCheckEnabled {
+				if tt.connectionCheckError != nil {
+					mockDB.On("HasOtherActiveConnections").Return(false, "", tt.connectionCheckError)
+				} else {
+					mockDB.On("HasOtherActiveConnections").Return(tt.hasOtherConnections, tt.username, nil)
+					if tt.expectNotification {
+						mockSlack.On("NotifyConnectionCheckFailure", "alter-table", "test_table", tt.username).Return(nil)
+					}
+				}
+			}
+
+			// GetTableRowCountは接続チェック前に呼ばれるため、常にモックを設定
+			mockDB.On("GetTableRowCount", "test_table").Return(int64(500), nil)
+
+			// 接続チェックが成功した場合の通常処理のモック
+			if !tt.expectError {
+				mockSlack.On("NotifyStartWithQuery", "alter-table", "test_table", "`ALTER TABLE test_table ADD COLUMN foo INT`", int64(500)).Return(nil)
+				mockSlack.On("NotifySuccessWithQuery", "alter-table", "test_table", "`ALTER TABLE test_table ADD COLUMN foo INT`", int64(500), mock.Anything).Return(nil)
+				mockDB.On("ExecuteAlter", "ALTER TABLE test_table ADD COLUMN foo INT").Return(nil)
+			}
+
+			err := manager.ExecuteAllTasks()
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			mockDB.AssertExpectations(t)
+			mockSlack.AssertExpectations(t)
+		})
+	}
 }

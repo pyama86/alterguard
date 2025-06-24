@@ -20,6 +20,7 @@ type Notifier interface {
 	NotifySuccessWithQueryAndLog(taskName, tableName, query string, rowCount int64, duration time.Duration, ptOscLog string) error
 	NotifyFailureWithQueryAndLog(taskName, tableName, query string, rowCount int64, err error, ptOscLog string) error
 	NotifyDryRunResult(taskName, tableName string, result *DryRunResult, duration time.Duration) error
+	NotifyConnectionCheckFailure(taskName, tableName, username string) error
 }
 
 type DryRunResult struct {
@@ -170,6 +171,14 @@ func (n *SlackNotifier) NotifyDryRunResult(taskName, tableName string, result *D
 	}
 
 	return n.sendMessage(message, color)
+}
+
+func (n *SlackNotifier) NotifyConnectionCheckFailure(taskName, tableName, username string) error {
+	title := n.formatTitle("🛑 Schema change stopped - Other connections detected")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nUser: %s\nReason: Detected other active connections for the same user",
+		title, taskName, tableName, username)
+
+	return n.sendMessage(message, "warning")
 }
 
 func (n *SlackNotifier) sendMessage(text, color string) error {
