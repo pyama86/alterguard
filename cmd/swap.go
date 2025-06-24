@@ -35,7 +35,7 @@ func swapTable(tableName string) error {
 	logger.Infof("Starting table swap for %s", tableName)
 
 	// Load configuration
-	cfg, err := config.LoadConfigWithEnvironment(commonConfigPath, tasksConfigPath, environment)
+	cfg, err := config.LoadConfigWithoutTasks(commonConfigPath, environment)
 	if err != nil {
 		logger.Errorf("Failed to load configuration: %v", err)
 		return fmt.Errorf("configuration load failed: %w", err)

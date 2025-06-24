@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -75,6 +76,27 @@ func LoadConfigWithEnvironment(commonConfigPath, tasksConfigPath, environment st
 	return &Config{
 		Common:      *common,
 		Queries:     queries,
+		DSN:         dsn,
+		Environment: env,
+	}, nil
+}
+
+func LoadConfigWithoutTasks(commonConfigPath, environment string) (*Config, error) {
+	common, err := loadCommonConfig(commonConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load common config: %w", err)
+	}
+
+	dsn := os.Getenv("DATABASE_DSN")
+	if dsn == "" {
+		return nil, fmt.Errorf("DATABASE_DSN environment variable is not set")
+	}
+
+	env := resolveEnvironment(environment)
+
+	return &Config{
+		Common:      *common,
+		Queries:     []string{},
 		DSN:         dsn,
 		Environment: env,
 	}, nil
@@ -156,6 +178,13 @@ func loadCommonConfig(path string) (*CommonConfig, error) {
 	// デフォルト値を設定（YAMLで明示的にfalseが設定されていない限りtrueにする）
 	if !isConnectionCheckExplicitlyDisabled(data) {
 		config.ConnectionCheck.Enabled = true
+	}
+
+	// 環境変数でpt_osc_thresholdをオーバーライド
+	if envThreshold := os.Getenv("PT_OSC_THRESHOLD"); envThreshold != "" {
+		if threshold, err := strconv.ParseInt(envThreshold, 10, 64); err == nil {
+			config.PtOscThreshold = threshold
+		}
 	}
 
 	return &config, nil
