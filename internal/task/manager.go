@@ -290,8 +290,18 @@ func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, 
 		if ptOscExecutor, ok := m.ptosc.(*ptosc.PtOscExecutor); ok {
 			ptOscLog = ptOscExecutor.GetOutputSummary()
 		}
-		if err := m.slack.NotifySuccessWithQueryAndLog(taskName, tableName, queryInfo, rowCount, duration, ptOscLog); err != nil {
-			m.logger.Errorf("Failed to send success notification: %v", err)
+
+		newRowCount, err := m.db.GetNewTableRowCount(tableName)
+		if err != nil {
+			m.logger.Warnf("Failed to get new table row count for %s: %v", tableName, err)
+			if slackErr := m.slack.NotifySuccessWithQueryAndLog(taskName, tableName, queryInfo, rowCount, duration, ptOscLog); slackErr != nil {
+				m.logger.Errorf("Failed to send success notification: %v", slackErr)
+			}
+		} else {
+			m.logger.Infof("pt-osc completed for table %s: original=%d, new=%d", tableName, rowCount, newRowCount)
+			if err := m.slack.NotifyPtOscCompletionWithNewTableCount(taskName, tableName, rowCount, newRowCount, duration, ptOscLog); err != nil {
+				m.logger.Errorf("Failed to send completion notification: %v", err)
+			}
 		}
 	}
 

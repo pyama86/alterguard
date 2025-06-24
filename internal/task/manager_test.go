@@ -24,6 +24,11 @@ func (m *MockDBClient) GetTableRowCount(table string) (int64, error) {
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockDBClient) GetNewTableRowCount(tableName string) (int64, error) {
+	args := m.Called(tableName)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockDBClient) ExecuteAlter(alterStatement string) error {
 	args := m.Called(alterStatement)
 	return args.Error(0)
@@ -130,6 +135,11 @@ func (m *MockSlackNotifier) NotifyFailureWithQueryAndLog(taskName, tableName, qu
 	return args.Error(0)
 }
 
+func (m *MockSlackNotifier) NotifyPtOscCompletionWithNewTableCount(taskName, tableName string, originalRowCount, newRowCount int64, duration time.Duration, ptOscLog string) error {
+	args := m.Called(taskName, tableName, originalRowCount, newRowCount, duration, ptOscLog)
+	return args.Error(0)
+}
+
 func (m *MockSlackNotifier) NotifyDryRunResult(taskName, tableName string, result *slack.DryRunResult, duration time.Duration) error {
 	args := m.Called(taskName, tableName, result, duration)
 	return args.Error(0)
@@ -201,8 +211,9 @@ func TestExecuteAllTasks(t *testing.T) {
 				// table2 is large (2000 rows), so it uses pt-osc
 				largeAlterQuery := "ALTER: `ALTER TABLE table2 ADD COLUMN bar INT`\npt-osc: `pt-online-schema-change --alter='ADD COLUMN bar INT' --execute`"
 				m.On("NotifyStartWithQuery", "pt-osc", "table2", largeAlterQuery, int64(2000)).Return(nil)
-				m.On("NotifySuccessWithQueryAndLog", "pt-osc", "table2", largeAlterQuery, int64(2000), mock.Anything, mock.Anything).Return(nil)
+				m.On("NotifyPtOscCompletionWithNewTableCount", "pt-osc", "table2", int64(2000), int64(1950), mock.Anything, mock.Anything).Return(nil)
 				p.On("ExecuteAlter", "table2", "ADD COLUMN bar INT", config.PtOscConfig{}, "test-dsn", false).Return(nil)
+				d.On("GetNewTableRowCount", "table2").Return(int64(1950), nil)
 			},
 		},
 		{

@@ -19,6 +19,7 @@ type Notifier interface {
 	NotifyFailureWithQuery(taskName, tableName, query string, rowCount int64, err error) error
 	NotifySuccessWithQueryAndLog(taskName, tableName, query string, rowCount int64, duration time.Duration, ptOscLog string) error
 	NotifyFailureWithQueryAndLog(taskName, tableName, query string, rowCount int64, err error, ptOscLog string) error
+	NotifyPtOscCompletionWithNewTableCount(taskName, tableName string, originalRowCount, newRowCount int64, duration time.Duration, ptOscLog string) error
 	NotifyDryRunResult(taskName, tableName string, result *DryRunResult, duration time.Duration) error
 	NotifyConnectionCheckFailure(taskName, tableName, username string) error
 }
@@ -147,6 +148,18 @@ func (n *SlackNotifier) NotifyFailureWithQueryAndLog(taskName, tableName, query 
 	}
 
 	return n.sendMessage(message, "danger")
+}
+
+func (n *SlackNotifier) NotifyPtOscCompletionWithNewTableCount(taskName, tableName string, originalRowCount, newRowCount int64, duration time.Duration, ptOscLog string) error {
+	title := n.formatTitle("✅ pt-osc completed successfully")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nOriginal row count: %d\nNew table row count: %d\nDuration: %s",
+		title, taskName, tableName, originalRowCount, newRowCount, duration.String())
+
+	if ptOscLog != "" {
+		message += "\n\n📋 pt-osc Output:\n```\n" + ptOscLog + "\n```"
+	}
+
+	return n.sendMessage(message, "good")
 }
 
 func (n *SlackNotifier) NotifyDryRunResult(taskName, tableName string, result *DryRunResult, duration time.Duration) error {

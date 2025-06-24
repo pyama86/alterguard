@@ -13,6 +13,7 @@ import (
 
 type Client interface {
 	GetTableRowCount(table string) (int64, error)
+	GetNewTableRowCount(tableName string) (int64, error)
 	ExecuteAlter(alterStatement string) error
 	ExecuteAlterWithDryRun(alterStatement string, dryRun bool) error
 	CheckMetadataLock(table string, thresholdSeconds int) (bool, error)
@@ -67,6 +68,11 @@ func (c *MySQLClient) GetTableRowCount(table string) (int64, error) {
 	}
 
 	return count, nil
+}
+
+func (c *MySQLClient) GetNewTableRowCount(tableName string) (int64, error) {
+	newTableName := fmt.Sprintf("_%s_new", tableName)
+	return c.GetTableRowCount(newTableName)
 }
 
 func (c *MySQLClient) ExecuteAlter(alterStatement string) error {
