@@ -914,6 +914,10 @@ func TestSwapTableConcurrentMonitoring(t *testing.T) {
 	newTableName := fmt.Sprintf("_%s_new", tableName)
 	mockDB.On("TableExists", newTableName).Return(true, nil)
 
+	// レコード件数チェック用のモック設定
+	mockDB.On("GetTableRowCount", tableName).Return(int64(1000), nil)
+	mockDB.On("GetNewTableRowCount", tableName).Return(int64(980), nil)
+
 	mockSlack.On("NotifyStartWithQuery", "swap", tableName, expectedQuery, int64(0)).Return(nil)
 	mockDB.On("SetSessionConfig", 0, 0).Return(nil)
 
