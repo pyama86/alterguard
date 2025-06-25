@@ -215,6 +215,10 @@ func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, 
 		return err
 	}
 
+	if err := m.checkNewTableExists(taskName, tableName); err != nil {
+		return err
+	}
+
 	combinedAlter := strings.Join(alterParts, ", ")
 	cleanedAlterQuery := strings.ReplaceAll(fmt.Sprintf("ALTER TABLE %s %s", tableName, combinedAlter), "`", "")
 	alterQuery := fmt.Sprintf("`%s`", cleanedAlterQuery)
@@ -572,6 +576,49 @@ func (m *Manager) CleanupTable(tableName string) error {
 	return nil
 }
 
+func (m *Manager) CleanupNewTable(tableName string) error {
+	m.logger.Infof("Starting new table cleanup for table %s", tableName)
+
+	dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS _%s_new", tableName)
+	cleanedQuery := strings.ReplaceAll(dropSQL, "`", "")
+	quotedQuery := fmt.Sprintf("`%s`", cleanedQuery)
+
+	taskName := "new-table-cleanup"
+	if m.dryRun {
+		taskName = "new-table-cleanup (DRY RUN)"
+	}
+
+	if err := m.slack.NotifyStartWithQuery(taskName, tableName, quotedQuery, 0); err != nil {
+		m.logger.Errorf("Failed to send start notification: %v", err)
+	}
+
+	start := time.Now()
+
+	if m.dryRun {
+		m.logger.Infof("[DRY RUN] Would execute SQL: %s", dropSQL)
+		duration := time.Since(start)
+		if err := m.slack.NotifySuccessWithQuery(taskName, tableName, quotedQuery, 0, duration); err != nil {
+			m.logger.Errorf("Failed to send success notification: %v", err)
+		}
+		return nil
+	}
+
+	if err := m.db.ExecuteAlter(dropSQL); err != nil {
+		if slackErr := m.slack.NotifyFailureWithQuery(taskName, tableName, quotedQuery, 0, err); slackErr != nil {
+			m.logger.Errorf("Failed to send failure notification: %v", slackErr)
+		}
+		return fmt.Errorf("failed to drop new table: %w", err)
+	}
+
+	duration := time.Since(start)
+	if err := m.slack.NotifySuccessWithQuery(taskName, tableName, quotedQuery, 0, duration); err != nil {
+		m.logger.Errorf("Failed to send success notification: %v", err)
+	}
+
+	m.logger.Infof("New table cleanup completed for table %s", tableName)
+	return nil
+}
+
 func (m *Manager) CleanupTriggers(tableName string) error {
 	m.logger.Infof("Starting trigger cleanup for table %s", tableName)
 
@@ -641,6 +688,26 @@ func (m *Manager) checkOtherActiveConnections(taskName, tableName string) error 
 
 		if slackErr := m.slack.NotifyConnectionCheckFailure(taskName, tableName, username); slackErr != nil {
 			m.logger.Errorf("Failed to send connection check failure notification: %v", slackErr)
+		}
+
+		return fmt.Errorf("%s", errMsg)
+	}
+
+	return nil
+}
+
+func (m *Manager) checkNewTableExists(taskName, tableName string) error {
+	exists, err := m.db.CheckNewTableExists(tableName)
+	if err != nil {
+		return fmt.Errorf("failed to check new table existence: %w", err)
+	}
+
+	if exists {
+		errMsg := fmt.Sprintf("previous pt-osc execution failed, _%s_new table already exists", tableName)
+		m.logger.Warn(errMsg)
+
+		if slackErr := m.slack.NotifyPtOscPreCheckFailure(taskName, tableName); slackErr != nil {
+			m.logger.Errorf("Failed to send pt-osc pre-check failure notification: %v", slackErr)
 		}
 
 		return fmt.Errorf("%s", errMsg)

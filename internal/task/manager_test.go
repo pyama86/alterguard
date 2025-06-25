@@ -60,6 +60,11 @@ func (m *MockDBClient) GetCurrentUser() (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockDBClient) CheckNewTableExists(tableName string) (bool, error) {
+	args := m.Called(tableName)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockDBClient) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -161,6 +166,11 @@ func (m *MockSlackNotifier) NotifyTriggerCleanupFailure(taskName, tableName stri
 	return args.Error(0)
 }
 
+func (m *MockSlackNotifier) NotifyPtOscPreCheckFailure(taskName, tableName string) error {
+	args := m.Called(taskName, tableName)
+	return args.Error(0)
+}
+
 func TestExecuteAllTasks(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -220,6 +230,7 @@ func TestExecuteAllTasks(t *testing.T) {
 				m.On("NotifySuccessWithQuery", "alter-table", "table1", "`ALTER TABLE table1 ADD COLUMN foo INT`", int64(500), mock.Anything).Return(nil)
 
 				// table2 is large (2000 rows), so it uses pt-osc
+				d.On("CheckNewTableExists", "table2").Return(false, nil) // 事前チェック: _table2_newは存在しない
 				largeAlterQuery := "ALTER: `ALTER TABLE table2 ADD COLUMN bar INT`\npt-osc: `pt-online-schema-change --alter='ADD COLUMN bar INT' --execute`"
 				m.On("NotifyStartWithQuery", "pt-osc", "table2", largeAlterQuery, int64(2000)).Return(nil)
 				m.On("NotifyPtOscCompletionWithNewTableCount", "pt-osc", "table2", int64(2000), int64(1950), mock.Anything, mock.Anything).Return(nil)
@@ -651,6 +662,7 @@ func TestPtOscWithNewTableCount(t *testing.T) {
 
 	// 大きなテーブル（pt-oscを使用）
 	mockDB.On("GetTableRowCount", "large_table").Return(int64(5000), nil)
+	mockDB.On("CheckNewTableExists", "large_table").Return(false, nil) // 事前チェック: _large_table_newは存在しない
 	mockDB.On("GetNewTableRowCount", "large_table").Return(int64(5001), nil)
 
 	largeAlterQuery := "ALTER: `ALTER TABLE large_table ADD COLUMN new_col INT`\npt-osc: `pt-online-schema-change --alter='ADD COLUMN new_col INT' --execute`"

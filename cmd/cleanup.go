@@ -14,6 +14,7 @@ import (
 var (
 	dropTable    bool
 	dropTriggers bool
+	dropNewTable bool
 )
 
 var cleanupCmd = &cobra.Command{
@@ -23,13 +24,14 @@ var cleanupCmd = &cobra.Command{
 
 Available cleanup operations:
 - --drop-table: Drop the backup table (table_name_old)
+- --drop-new-table: Drop the new table (_table_name_new)
 - --drop-triggers: Drop pt-osc triggers (pt_osc_table_name_*)
 
 At least one cleanup operation must be specified.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !dropTable && !dropTriggers {
-			return fmt.Errorf("at least one cleanup operation must be specified (--drop-table or --drop-triggers)")
+		if !dropTable && !dropNewTable && !dropTriggers {
+			return fmt.Errorf("at least one cleanup operation must be specified (--drop-table, --drop-new-table, or --drop-triggers)")
 		}
 		return cleanupTable(args[0])
 	},
@@ -37,6 +39,7 @@ At least one cleanup operation must be specified.`,
 
 func init() {
 	cleanupCmd.Flags().BoolVar(&dropTable, "drop-table", false, "Drop backup table")
+	cleanupCmd.Flags().BoolVar(&dropNewTable, "drop-new-table", false, "Drop new table")
 	cleanupCmd.Flags().BoolVar(&dropTriggers, "drop-triggers", false, "Drop pt-osc triggers")
 	rootCmd.AddCommand(cleanupCmd)
 }
@@ -88,6 +91,15 @@ func cleanupTable(tableName string) error {
 			return fmt.Errorf("backup table cleanup failed: %w", err)
 		}
 		logger.Infof("Backup table cleanup completed for %s", tableName)
+	}
+
+	if dropNewTable {
+		logger.Infof("Dropping new table for %s", tableName)
+		if err := taskManager.CleanupNewTable(tableName); err != nil {
+			logger.Errorf("Failed to drop new table: %v", err)
+			return fmt.Errorf("new table cleanup failed: %w", err)
+		}
+		logger.Infof("New table cleanup completed for %s", tableName)
 	}
 
 	if dropTriggers {

@@ -18,6 +18,7 @@ type Client interface {
 	ExecuteAlterWithDryRun(alterStatement string, dryRun bool) error
 	SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error
 	TableExists(tableName string) (bool, error)
+	CheckNewTableExists(tableName string) (bool, error)
 	HasOtherActiveConnections() (bool, string, error)
 	GetCurrentUser() (string, error)
 	Close() error
@@ -154,6 +155,11 @@ func (c *MySQLClient) TableExists(tableName string) (bool, error) {
 	}
 
 	return count > 0, nil
+}
+
+func (c *MySQLClient) CheckNewTableExists(tableName string) (bool, error) {
+	newTableName := fmt.Sprintf("_%s_new", tableName)
+	return c.TableExists(newTableName)
 }
 
 func (c *MySQLClient) HasOtherActiveConnections() (bool, string, error) {

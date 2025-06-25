@@ -25,6 +25,7 @@ type Notifier interface {
 	NotifyTriggerCleanupStart(taskName, tableName string, triggers []string) error
 	NotifyTriggerCleanupSuccess(taskName, tableName string, triggers []string, duration time.Duration) error
 	NotifyTriggerCleanupFailure(taskName, tableName string, triggers []string, err error) error
+	NotifyPtOscPreCheckFailure(taskName, tableName string) error
 }
 
 type DryRunResult struct {
@@ -219,6 +220,14 @@ func (n *SlackNotifier) NotifyTriggerCleanupFailure(taskName, tableName string, 
 		title, taskName, tableName, triggers, err.Error())
 
 	return n.sendMessage(message, "danger")
+}
+
+func (n *SlackNotifier) NotifyPtOscPreCheckFailure(taskName, tableName string) error {
+	title := n.formatTitle("⚠️ pt-osc pre-check failed")
+	message := fmt.Sprintf("%s\nTask: %s\nTable: %s\nReason: Previous pt-osc execution failed, _%s_new table already exists\n\nTo resolve this issue, run the cleanup command:\n```\nalterguard cleanup %s --drop-new-table --drop-triggers\n```\n\nAfter cleanup, you can retry the pt-osc execution.",
+		title, taskName, tableName, tableName, tableName)
+
+	return n.sendMessage(message, "warning")
 }
 
 func (n *SlackNotifier) sendMessage(text, color string) error {
