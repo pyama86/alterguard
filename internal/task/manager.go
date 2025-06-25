@@ -465,6 +465,11 @@ func (m *Manager) SwapTable(tableName string) error {
 
 	m.logger.Infof("Both tables exist: %s and %s", tableName, newTableName)
 
+	// レコード件数チェック（5%の閾値でハードコーディング）
+	if err := m.checkRowCountDifference(tableName); err != nil {
+		return err
+	}
+
 	swapSQL := fmt.Sprintf("RENAME TABLE %s TO %s_old, _%s_new TO %s",
 		tableName, tableName, tableName, tableName)
 	cleanedQuery := strings.ReplaceAll(swapSQL, "`", "")
@@ -712,6 +717,54 @@ func (m *Manager) checkNewTableExists(taskName, tableName string) error {
 
 		return fmt.Errorf("%s", errMsg)
 	}
+
+	return nil
+}
+
+func (m *Manager) checkRowCountDifference(tableName string) error {
+	originalCount, err := m.db.GetTableRowCount(tableName)
+	if err != nil {
+		return fmt.Errorf("failed to get original table row count: %w", err)
+	}
+
+	newCount, err := m.db.GetNewTableRowCount(tableName)
+	if err != nil {
+		return fmt.Errorf("failed to get new table row count: %w", err)
+	}
+
+	m.logger.Infof("Row count comparison for %s: original=%d, new=%d", tableName, originalCount, newCount)
+
+	var diffPercent float64
+
+	if originalCount >= newCount {
+		if originalCount > 0 {
+			diffPercent = float64(originalCount-newCount) / float64(originalCount) * 100
+		}
+	} else {
+		diffPercent = float64(newCount-originalCount) / float64(newCount) * 100
+	}
+
+	threshold := 5.0 // 5%の閾値をハードコーディング
+	if diffPercent > threshold {
+		errMsg := fmt.Sprintf("row count difference exceeds threshold: %.2f%% (threshold: %.2f%%), original=%d, new=%d",
+			diffPercent, threshold, originalCount, newCount)
+
+		m.logger.Errorf("Row count check failed for table %s: %s", tableName, errMsg)
+
+		taskName := "swap-row-count-check"
+		if m.dryRun {
+			taskName = "swap-row-count-check (DRY RUN)"
+		}
+
+		if slackErr := m.slack.NotifyWarning(taskName, tableName, errMsg); slackErr != nil {
+			m.logger.Errorf("Failed to send row count check warning notification: %v", slackErr)
+		}
+
+		return fmt.Errorf("row count check failed: %s", errMsg)
+	}
+
+	m.logger.Infof("Row count check passed for table %s: difference=%.2f%% (threshold: %.2f%%)",
+		tableName, diffPercent, threshold)
 
 	return nil
 }

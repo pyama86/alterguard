@@ -344,6 +344,207 @@ func TestExecuteAllTasks(t *testing.T) {
 	}
 }
 
+func TestCheckRowCountDifference(t *testing.T) {
+	tests := []struct {
+		name          string
+		tableName     string
+		originalCount int64
+		newCount      int64
+		expectError   bool
+		expectWarning bool
+		dryRun        bool
+	}{
+		{
+			name:          "差異が閾値以下（正常）",
+			tableName:     "test_table",
+			originalCount: 1000,
+			newCount:      980, // 2%の差異
+			expectError:   false,
+			expectWarning: false,
+		},
+		{
+			name:          "差異が閾値を超える（元テーブルが多い）",
+			tableName:     "test_table",
+			originalCount: 1000,
+			newCount:      900, // 10%の差異
+			expectError:   true,
+			expectWarning: true,
+		},
+		{
+			name:          "差異が閾値を超える（新テーブルが多い）",
+			tableName:     "test_table",
+			originalCount: 900,
+			newCount:      1000, // 10%の差異
+			expectError:   true,
+			expectWarning: true,
+		},
+		{
+			name:          "差異がちょうど閾値（5%）",
+			tableName:     "test_table",
+			originalCount: 1000,
+			newCount:      950, // 5%の差異
+			expectError:   false,
+			expectWarning: false,
+		},
+		{
+			name:          "差異が閾値を少し超える（5.1%）",
+			tableName:     "test_table",
+			originalCount: 1000,
+			newCount:      949, // 5.1%の差異
+			expectError:   true,
+			expectWarning: true,
+		},
+		{
+			name:          "元テーブルが0件",
+			tableName:     "test_table",
+			originalCount: 0,
+			newCount:      10,
+			expectError:   true,
+			expectWarning: true,
+		},
+		{
+			name:          "両方とも0件",
+			tableName:     "test_table",
+			originalCount: 0,
+			newCount:      0,
+			expectError:   false,
+			expectWarning: false,
+		},
+		{
+			name:          "DRYRUNモード",
+			tableName:     "test_table",
+			originalCount: 1000,
+			newCount:      800, // 20%の差異
+			expectError:   true,
+			expectWarning: true,
+			dryRun:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := logrus.New()
+			logger.SetLevel(logrus.FatalLevel)
+
+			mockDB := &MockDBClient{}
+			mockPtOsc := &MockPtOscExecutor{}
+			mockSlack := &MockSlackNotifier{}
+
+			cfg := &config.Config{}
+			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, tt.dryRun)
+
+			// モック設定
+			mockDB.On("GetTableRowCount", tt.tableName).Return(tt.originalCount, nil)
+			mockDB.On("GetNewTableRowCount", tt.tableName).Return(tt.newCount, nil)
+
+			if tt.expectWarning {
+				taskName := "swap-row-count-check"
+				if tt.dryRun {
+					taskName = "swap-row-count-check (DRY RUN)"
+				}
+				mockSlack.On("NotifyWarning", taskName, tt.tableName, mock.MatchedBy(func(msg string) bool {
+					return strings.Contains(msg, "row count difference exceeds threshold")
+				})).Return(nil)
+			}
+
+			err := manager.checkRowCountDifference(tt.tableName)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "row count check failed")
+			} else {
+				assert.NoError(t, err)
+			}
+
+			mockDB.AssertExpectations(t)
+			mockSlack.AssertExpectations(t)
+		})
+	}
+}
+
+func TestSwapTableWithRowCountCheck(t *testing.T) {
+	tests := []struct {
+		name          string
+		tableName     string
+		originalCount int64
+		newCount      int64
+		expectError   bool
+		expectSwap    bool
+	}{
+		{
+			name:          "レコード件数チェック通過でスワップ実行",
+			tableName:     "test_table",
+			originalCount: 1000,
+			newCount:      980,
+			expectError:   false,
+			expectSwap:    true,
+		},
+		{
+			name:          "レコード件数チェック失敗でスワップ停止",
+			tableName:     "test_table",
+			originalCount: 1000,
+			newCount:      800,
+			expectError:   true,
+			expectSwap:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := logrus.New()
+			logger.SetLevel(logrus.FatalLevel)
+
+			mockDB := &MockDBClient{}
+			mockPtOsc := &MockPtOscExecutor{}
+			mockSlack := &MockSlackNotifier{}
+
+			cfg := &config.Config{
+				Common: config.CommonConfig{
+					SessionConfig: config.SessionConfig{
+						LockWaitTimeout:       0,
+						InnodbLockWaitTimeout: 0,
+					},
+				},
+			}
+			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+
+			// テーブル存在確認
+			mockDB.On("TableExists", tt.tableName).Return(true, nil)
+			newTableName := fmt.Sprintf("_%s_new", tt.tableName)
+			mockDB.On("TableExists", newTableName).Return(true, nil)
+
+			// レコード件数チェック用
+			mockDB.On("GetTableRowCount", tt.tableName).Return(tt.originalCount, nil)
+			mockDB.On("GetNewTableRowCount", tt.tableName).Return(tt.newCount, nil)
+
+			if !tt.expectSwap {
+				// レコード件数チェック失敗時の警告通知
+				mockSlack.On("NotifyWarning", "swap-row-count-check", tt.tableName, mock.MatchedBy(func(msg string) bool {
+					return strings.Contains(msg, "row count difference exceeds threshold")
+				})).Return(nil)
+			} else {
+				// スワップ実行時の通知
+				expectedQuery := fmt.Sprintf("`RENAME TABLE %s TO %s_old, _%s_new TO %s`", tt.tableName, tt.tableName, tt.tableName, tt.tableName)
+				mockSlack.On("NotifyStartWithQuery", "swap", tt.tableName, expectedQuery, int64(0)).Return(nil)
+				mockDB.On("SetSessionConfig", 0, 0).Return(nil)
+				mockDB.On("ExecuteAlter", mock.AnythingOfType("string")).Return(nil)
+				mockSlack.On("NotifySuccessWithQuery", "swap", tt.tableName, expectedQuery, int64(0), mock.Anything).Return(nil)
+			}
+
+			err := manager.SwapTable(tt.tableName)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			mockDB.AssertExpectations(t)
+			mockSlack.AssertExpectations(t)
+		})
+	}
+}
+
 func TestSwapTable(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -451,6 +652,10 @@ func TestSwapTable(t *testing.T) {
 				mockDB.AssertExpectations(t)
 				return
 			}
+
+			// レコード件数チェック用のモック設定
+			mockDB.On("GetTableRowCount", tt.tableName).Return(int64(1000), nil)
+			mockDB.On("GetNewTableRowCount", tt.tableName).Return(int64(980), nil)
 
 			expectedQuery := fmt.Sprintf("`RENAME TABLE %s TO %s_old, _%s_new TO %s`", tt.tableName, tt.tableName, tt.tableName, tt.tableName)
 			taskName := "swap"
