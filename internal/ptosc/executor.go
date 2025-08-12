@@ -269,12 +269,15 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 		args = append(args, "--statistics")
 	}
 
-	if ptOscConfig.NoDropTriggers {
-		args = append(args, "--no-drop-triggers")
-	}
+	// dry-runでない場合のみ、--no-drop-triggers と --no-drop-new-table を追加
+	if !forceDryRun && !ptOscConfig.DryRun {
+		if ptOscConfig.NoDropTriggers {
+			args = append(args, "--no-drop-triggers")
+		}
 
-	if ptOscConfig.NoDropNewTable {
-		args = append(args, "--no-drop-new-table")
+		if ptOscConfig.NoDropNewTable {
+			args = append(args, "--no-drop-new-table")
+		}
 	}
 
 	if ptOscConfig.NoDropOldTable {
