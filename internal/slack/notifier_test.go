@@ -87,6 +87,12 @@ func TestNotificationMessages(t *testing.T) {
 				return notifier.NotifyWarning("test_task", "test_table", "test warning message")
 			},
 		},
+		{
+			name: "notify pt-osc completion with new table count",
+			testFunc: func() error {
+				return notifier.NotifyPtOscCompletionWithNewTableCount("pt-osc", "test_table", 1000, 1000, 5*time.Minute, "pt-osc output log")
+			},
+		},
 	}
 
 	for _, tt := range tests {

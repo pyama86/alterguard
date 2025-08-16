@@ -163,7 +163,7 @@ func (n *SlackNotifier) NotifyPtOscCompletionWithNewTableCount(taskName, tableNa
 		message += "\n\n📋 pt-osc Output:\n```\n" + ptOscLog + "\n```"
 	}
 
-	return n.sendMessage(message, "good")
+	return n.sendMessage(message, "warning")
 }
 
 func (n *SlackNotifier) NotifyDryRunResult(taskName, tableName string, result *DryRunResult, duration time.Duration) error {
