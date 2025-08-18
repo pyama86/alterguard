@@ -73,12 +73,15 @@ func TestGetTableRowCount(t *testing.T) {
 		innodbSysError   error
 		innodbReturn     any
 		innodbError      error
+		tablesReturn     any
+		tablesError      error
 		countReturn      any
 		countError       error
 		expectCount      int64
 		expectError      bool
 		expectFallback   bool
 		expectUseInnodb8 bool
+		expectUseTables  bool
 	}{
 		{
 			name:             "successful innodb_sys_tablestats",
@@ -89,6 +92,7 @@ func TestGetTableRowCount(t *testing.T) {
 			expectError:      false,
 			expectFallback:   false,
 			expectUseInnodb8: false,
+			expectUseTables:  false,
 		},
 		{
 			name:             "innodb_sys fails, innodb_tablestats succeeds",
@@ -101,20 +105,39 @@ func TestGetTableRowCount(t *testing.T) {
 			expectError:      false,
 			expectFallback:   false,
 			expectUseInnodb8: true,
+			expectUseTables:  false,
 		},
 		{
-			name:             "both innodb fail, count succeeds",
+			name:             "innodb fails, information_schema.tables succeeds",
 			table:            "users",
 			innodbSysReturn:  nil,
 			innodbSysError:   sql.ErrNoRows,
 			innodbReturn:     nil,
 			innodbError:      sql.ErrNoRows,
+			tablesReturn:     int64(600),
+			tablesError:      nil,
+			expectCount:      600,
+			expectError:      false,
+			expectFallback:   false,
+			expectUseInnodb8: true,
+			expectUseTables:  true,
+		},
+		{
+			name:             "all stats tables fail, count succeeds",
+			table:            "users",
+			innodbSysReturn:  nil,
+			innodbSysError:   sql.ErrNoRows,
+			innodbReturn:     nil,
+			innodbError:      sql.ErrNoRows,
+			tablesReturn:     nil,
+			tablesError:      sql.ErrNoRows,
 			countReturn:      int64(500),
 			countError:       nil,
 			expectCount:      500,
 			expectError:      false,
 			expectFallback:   true,
 			expectUseInnodb8: true,
+			expectUseTables:  true,
 		},
 		{
 			name:             "all methods fail",
@@ -123,12 +146,15 @@ func TestGetTableRowCount(t *testing.T) {
 			innodbSysError:   sql.ErrNoRows,
 			innodbReturn:     nil,
 			innodbError:      sql.ErrNoRows,
+			tablesReturn:     nil,
+			tablesError:      sql.ErrNoRows,
 			countReturn:      nil,
 			countError:       assert.AnError,
 			expectCount:      0,
 			expectError:      true,
 			expectFallback:   true,
 			expectUseInnodb8: true,
+			expectUseTables:  true,
 		},
 	}
 
@@ -165,6 +191,22 @@ func TestGetTableRowCount(t *testing.T) {
 					}), tt.table).Run(func(args mock.Arguments) {
 						dest := args.Get(0).(*int64)
 						*dest = tt.innodbReturn.(int64)
+					}).Return(nil)
+				}
+			}
+
+			// information_schema.TABLESクエリのモック設定
+			if tt.expectUseTables {
+				if tt.tablesError != nil {
+					mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+						return strings.Contains(query, "TABLE_ROWS") && strings.Contains(query, "information_schema.TABLES")
+					}), tt.table).Return(tt.tablesError)
+				} else {
+					mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+						return strings.Contains(query, "TABLE_ROWS") && strings.Contains(query, "information_schema.TABLES")
+					}), tt.table).Run(func(args mock.Arguments) {
+						dest := args.Get(0).(*int64)
+						*dest = tt.tablesReturn.(int64)
 					}).Return(nil)
 				}
 			}
