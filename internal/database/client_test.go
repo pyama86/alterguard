@@ -67,46 +67,68 @@ func (m *MockLogger) Errorf(format string, args ...interface{}) {
 
 func TestGetTableRowCount(t *testing.T) {
 	tests := []struct {
-		name           string
-		table          string
-		innodbReturn   any
-		innodbError    error
-		countReturn    any
-		countError     error
-		expectCount    int64
-		expectError    bool
-		expectFallback bool
+		name             string
+		table            string
+		innodbSysReturn  any
+		innodbSysError   error
+		innodbReturn     any
+		innodbError      error
+		countReturn      any
+		countError       error
+		expectCount      int64
+		expectError      bool
+		expectFallback   bool
+		expectUseInnodb8 bool
 	}{
 		{
-			name:           "successful innodb count",
-			table:          "users",
-			innodbReturn:   int64(1000),
-			innodbError:    nil,
-			expectCount:    1000,
-			expectError:    false,
-			expectFallback: false,
+			name:             "successful innodb_sys_tablestats",
+			table:            "users",
+			innodbSysReturn:  int64(1000),
+			innodbSysError:   nil,
+			expectCount:      1000,
+			expectError:      false,
+			expectFallback:   false,
+			expectUseInnodb8: false,
 		},
 		{
-			name:           "innodb fails, count succeeds",
-			table:          "users",
-			innodbReturn:   nil,
-			innodbError:    sql.ErrNoRows,
-			countReturn:    int64(500),
-			countError:     nil,
-			expectCount:    500,
-			expectError:    false,
-			expectFallback: true,
+			name:             "innodb_sys fails, innodb_tablestats succeeds",
+			table:            "users",
+			innodbSysReturn:  nil,
+			innodbSysError:   sql.ErrNoRows,
+			innodbReturn:     int64(800),
+			innodbError:      nil,
+			expectCount:      800,
+			expectError:      false,
+			expectFallback:   false,
+			expectUseInnodb8: true,
 		},
 		{
-			name:           "both fail",
-			table:          "nonexistent",
-			innodbReturn:   nil,
-			innodbError:    sql.ErrNoRows,
-			countReturn:    nil,
-			countError:     assert.AnError,
-			expectCount:    0,
-			expectError:    true,
-			expectFallback: true,
+			name:             "both innodb fail, count succeeds",
+			table:            "users",
+			innodbSysReturn:  nil,
+			innodbSysError:   sql.ErrNoRows,
+			innodbReturn:     nil,
+			innodbError:      sql.ErrNoRows,
+			countReturn:      int64(500),
+			countError:       nil,
+			expectCount:      500,
+			expectError:      false,
+			expectFallback:   true,
+			expectUseInnodb8: true,
+		},
+		{
+			name:             "all methods fail",
+			table:            "nonexistent",
+			innodbSysReturn:  nil,
+			innodbSysError:   sql.ErrNoRows,
+			innodbReturn:     nil,
+			innodbError:      sql.ErrNoRows,
+			countReturn:      nil,
+			countError:       assert.AnError,
+			expectCount:      0,
+			expectError:      true,
+			expectFallback:   true,
+			expectUseInnodb8: true,
 		},
 	}
 
@@ -118,17 +140,33 @@ func TestGetTableRowCount(t *testing.T) {
 			client := &MySQLClient{db: nil, logger: logger}
 
 			// INNODB_SYS_TABLESTATSクエリのモック設定
-			if tt.innodbError != nil {
+			if tt.innodbSysError != nil {
 				mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
 					return strings.Contains(query, "INNODB_SYS_TABLESTATS")
-				}), tt.table).Return(tt.innodbError)
+				}), tt.table).Return(tt.innodbSysError)
 			} else {
 				mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
 					return strings.Contains(query, "INNODB_SYS_TABLESTATS")
 				}), tt.table).Run(func(args mock.Arguments) {
 					dest := args.Get(0).(*int64)
-					*dest = tt.innodbReturn.(int64)
+					*dest = tt.innodbSysReturn.(int64)
 				}).Return(nil)
+			}
+
+			// INNODB_TABLESTATSクエリのモック設定 (MySQL 8.0)
+			if tt.expectUseInnodb8 {
+				if tt.innodbError != nil {
+					mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+						return strings.Contains(query, "INNODB_TABLESTATS") && !strings.Contains(query, "INNODB_SYS_TABLESTATS")
+					}), tt.table).Return(tt.innodbError)
+				} else {
+					mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+						return strings.Contains(query, "INNODB_TABLESTATS") && !strings.Contains(query, "INNODB_SYS_TABLESTATS")
+					}), tt.table).Run(func(args mock.Arguments) {
+						dest := args.Get(0).(*int64)
+						*dest = tt.innodbReturn.(int64)
+					}).Return(nil)
+				}
 			}
 
 			// フォールバック用のCOUNT(*)クエリのモック設定

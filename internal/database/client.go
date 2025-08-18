@@ -54,7 +54,7 @@ func NewMySQLClient(dsn string, logger *logrus.Logger) (*MySQLClient, error) {
 func (c *MySQLClient) GetTableRowCount(table string) (int64, error) {
 	var count int64
 
-	// 第一選択: INNODB_SYS_TABLESTATS
+	// 第一選択: INNODB_SYS_TABLESTATS (MySQL 5.7)
 	query := `
 		SELECT NUM_ROWS
 		FROM information_schema.INNODB_SYS_TABLESTATS
@@ -63,15 +63,27 @@ func (c *MySQLClient) GetTableRowCount(table string) (int64, error) {
 
 	err := c.db.Get(&count, query, table)
 	if err != nil {
-		// フォールバック: COUNT(*)
-		c.logger.Warnf("Failed to get row count from INNODB_SYS_TABLESTATS for %s, falling back to COUNT(*): %v", table, err)
-
-		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
-		err = c.db.Get(&count, countQuery)
+		// 第二選択: INNODB_TABLESTATS (MySQL 8.0+)
+		c.logger.Debugf("Failed to get row count from INNODB_SYS_TABLESTATS for %s, trying INNODB_TABLESTATS: %v", table, err)
+		query = `
+			SELECT NUM_ROWS
+			FROM information_schema.INNODB_TABLESTATS
+			WHERE NAME = CONCAT(DATABASE(), '/', ?)
+		`
+		err = c.db.Get(&count, query, table)
 		if err != nil {
-			return 0, fmt.Errorf("failed to get table row count for %s: %w", table, err)
+			// フォールバック: COUNT(*)
+			c.logger.Warnf("Failed to get row count from INNODB stats tables for %s, falling back to COUNT(*): %v", table, err)
+
+			countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
+			err = c.db.Get(&count, countQuery)
+			if err != nil {
+				return 0, fmt.Errorf("failed to get table row count for %s: %w", table, err)
+			}
+			c.logger.Infof("Used COUNT(*) for table %s: %d rows", table, count)
+		} else {
+			c.logger.Debugf("Used INNODB_TABLESTATS for table %s: %d rows", table, count)
 		}
-		c.logger.Infof("Used COUNT(*) for table %s: %d rows", table, count)
 	} else {
 		c.logger.Debugf("Used INNODB_SYS_TABLESTATS for table %s: %d rows", table, count)
 	}
@@ -219,7 +231,7 @@ type DBExecutor interface {
 func (c *MySQLClient) getTableRowCountWithDB(db DBExecutor, table string) (int64, error) {
 	var count int64
 
-	// 第一選択: INNODB_SYS_TABLESTATS
+	// 第一選択: INNODB_SYS_TABLESTATS (MySQL 5.7)
 	query := `
 		SELECT NUM_ROWS
 		FROM information_schema.INNODB_SYS_TABLESTATS
@@ -228,15 +240,27 @@ func (c *MySQLClient) getTableRowCountWithDB(db DBExecutor, table string) (int64
 
 	err := db.Get(&count, query, table)
 	if err != nil {
-		// フォールバック: COUNT(*)
-		c.logger.Warnf("Failed to get row count from INNODB_SYS_TABLESTATS for %s, falling back to COUNT(*): %v", table, err)
-
-		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
-		err = db.Get(&count, countQuery)
+		// 第二選択: INNODB_TABLESTATS (MySQL 8.0+)
+		c.logger.Debugf("Failed to get row count from INNODB_SYS_TABLESTATS for %s, trying INNODB_TABLESTATS: %v", table, err)
+		query = `
+			SELECT NUM_ROWS
+			FROM information_schema.INNODB_TABLESTATS
+			WHERE NAME = CONCAT(DATABASE(), '/', ?)
+		`
+		err = db.Get(&count, query, table)
 		if err != nil {
-			return 0, fmt.Errorf("failed to get table row count for %s: %w", table, err)
+			// フォールバック: COUNT(*)
+			c.logger.Warnf("Failed to get row count from INNODB stats tables for %s, falling back to COUNT(*): %v", table, err)
+
+			countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
+			err = db.Get(&count, countQuery)
+			if err != nil {
+				return 0, fmt.Errorf("failed to get table row count for %s: %w", table, err)
+			}
+			c.logger.Infof("Used COUNT(*) for table %s: %d rows", table, count)
+		} else {
+			c.logger.Debugf("Used INNODB_TABLESTATS for table %s: %d rows", table, count)
 		}
-		c.logger.Infof("Used COUNT(*) for table %s: %d rows", table, count)
 	} else {
 		c.logger.Debugf("Used INNODB_SYS_TABLESTATS for table %s: %d rows", table, count)
 	}
