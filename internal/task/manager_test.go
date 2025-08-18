@@ -778,7 +778,7 @@ func TestCleanupTriggers(t *testing.T) {
 			tableName: "test_table",
 			dryRun:    false,
 			triggerErrors: map[string]error{
-				"DROP TRIGGER IF EXISTS pt_osc_test_table_del": errors.New("trigger drop failed"),
+				"DROP TRIGGER IF EXISTS pt_osc_testdb_test_table_del": errors.New("trigger drop failed"),
 			},
 			expectError: true,
 		},
@@ -793,13 +793,15 @@ func TestCleanupTriggers(t *testing.T) {
 			mockPtOsc := &MockPtOscExecutor{}
 			mockSlack := &MockSlackNotifier{}
 
-			cfg := &config.Config{}
+			cfg := &config.Config{
+				DSN: "user:password@tcp(localhost:3306)/testdb?charset=utf8mb4",
+			}
 			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, tt.dryRun)
 
 			expectedTriggers := []string{
-				"pt_osc_test_table_del",
-				"pt_osc_test_table_upd",
-				"pt_osc_test_table_ins",
+				"pt_osc_testdb_test_table_del",
+				"pt_osc_testdb_test_table_upd",
+				"pt_osc_testdb_test_table_ins",
 			}
 
 			taskName := "trigger-cleanup"
@@ -811,9 +813,9 @@ func TestCleanupTriggers(t *testing.T) {
 
 			if !tt.dryRun {
 				expectedSQL := []string{
-					"DROP TRIGGER IF EXISTS pt_osc_test_table_del",
-					"DROP TRIGGER IF EXISTS pt_osc_test_table_upd",
-					"DROP TRIGGER IF EXISTS pt_osc_test_table_ins",
+					"DROP TRIGGER IF EXISTS pt_osc_testdb_test_table_del",
+					"DROP TRIGGER IF EXISTS pt_osc_testdb_test_table_upd",
+					"DROP TRIGGER IF EXISTS pt_osc_testdb_test_table_ins",
 				}
 
 				for _, sql := range expectedSQL {
@@ -1046,6 +1048,64 @@ func TestConnectionCheck(t *testing.T) {
 
 			mockDB.AssertExpectations(t)
 			mockSlack.AssertExpectations(t)
+		})
+	}
+}
+
+func TestExtractDatabaseNameFromDSN(t *testing.T) {
+	tests := []struct {
+		name     string
+		dsn      string
+		expected string
+		hasError bool
+	}{
+		{
+			name:     "valid DSN with parameters",
+			dsn:      "user:password@tcp(localhost:3306)/testdb?charset=utf8mb4",
+			expected: "testdb",
+			hasError: false,
+		},
+		{
+			name:     "valid DSN without parameters",
+			dsn:      "user:password@tcp(localhost:3306)/mydb",
+			expected: "mydb",
+			hasError: false,
+		},
+		{
+			name:     "invalid DSN format",
+			dsn:      "invalid_dsn",
+			expected: "",
+			hasError: true,
+		},
+		{
+			name:     "DSN without database name",
+			dsn:      "user:password@tcp(localhost:3306)/",
+			expected: "",
+			hasError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := logrus.New()
+			logger.SetLevel(logrus.FatalLevel)
+
+			mockDB := &MockDBClient{}
+			mockPtOsc := &MockPtOscExecutor{}
+			mockSlack := &MockSlackNotifier{}
+
+			cfg := &config.Config{DSN: tt.dsn}
+			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+
+			result, err := manager.extractDatabaseNameFromDSN()
+
+			if tt.hasError {
+				assert.Error(t, err)
+				assert.Empty(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
+			}
 		})
 	}
 }

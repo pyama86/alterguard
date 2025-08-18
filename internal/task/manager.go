@@ -54,6 +54,26 @@ func NewManager(db database.Client, ptoscExec ptosc.Executor, slackNotifier slac
 	}
 }
 
+func (m *Manager) extractDatabaseNameFromDSN() (string, error) {
+	dsn := m.config.DSN
+	parts := strings.Split(dsn, "/")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("invalid DSN format: %s", dsn)
+	}
+
+	dbPart := parts[len(parts)-1]
+
+	if strings.Contains(dbPart, "?") {
+		dbPart = strings.Split(dbPart, "?")[0]
+	}
+
+	if dbPart == "" {
+		return "", fmt.Errorf("database name not found in DSN: %s", dsn)
+	}
+
+	return dbPart, nil
+}
+
 func (m *Manager) ExecuteAllTasks() error {
 	m.logger.Infof("Starting execution of %d queries", len(m.config.Queries))
 
@@ -627,10 +647,15 @@ func (m *Manager) CleanupNewTable(tableName string) error {
 func (m *Manager) CleanupTriggers(tableName string) error {
 	m.logger.Infof("Starting trigger cleanup for table %s", tableName)
 
+	dbName, err := m.extractDatabaseNameFromDSN()
+	if err != nil {
+		return fmt.Errorf("failed to extract database name from DSN: %w", err)
+	}
+
 	triggers := []string{
-		fmt.Sprintf("pt_osc_%s_del", tableName),
-		fmt.Sprintf("pt_osc_%s_upd", tableName),
-		fmt.Sprintf("pt_osc_%s_ins", tableName),
+		fmt.Sprintf("pt_osc_%s_%s_del", dbName, tableName),
+		fmt.Sprintf("pt_osc_%s_%s_upd", dbName, tableName),
+		fmt.Sprintf("pt_osc_%s_%s_ins", dbName, tableName),
 	}
 
 	taskName := "trigger-cleanup"
