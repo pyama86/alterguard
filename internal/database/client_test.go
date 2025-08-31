@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -311,6 +312,135 @@ func TestExecuteAlter(t *testing.T) {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
+			}
+
+			mockDB.AssertExpectations(t)
+		})
+	}
+}
+
+func TestGetTableRowCountForSwap(t *testing.T) {
+	tests := []struct {
+		name        string
+		table       string
+		countReturn int64
+		countError  error
+		expectCount int64
+		expectError bool
+	}{
+		{
+			name:        "successful count for swap",
+			table:       "users",
+			countReturn: 1000,
+			countError:  nil,
+			expectCount: 1000,
+			expectError: false,
+		},
+		{
+			name:        "count error for swap",
+			table:       "nonexistent",
+			countReturn: 0,
+			countError:  assert.AnError,
+			expectCount: 0,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockDB := &MockDB{}
+			logger := logrus.New()
+			logger.SetLevel(logrus.PanicLevel)
+			client := &MySQLClient{db: nil, logger: logger}
+
+			// COUNT(*)クエリのモック設定
+			if tt.countError != nil {
+				mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+					return strings.Contains(query, "COUNT(*)")
+				})).Return(tt.countError)
+			} else {
+				mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+					return strings.Contains(query, "COUNT(*)")
+				})).Run(func(args mock.Arguments) {
+					dest := args.Get(0).(*int64)
+					*dest = tt.countReturn
+				}).Return(nil)
+			}
+
+			// テスト用に直接mockDBを使用
+			count, err := client.getTableRowCountForSwapWithDB(mockDB, tt.table)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Equal(t, int64(0), count)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectCount, count)
+			}
+
+			mockDB.AssertExpectations(t)
+		})
+	}
+}
+
+func TestGetNewTableRowCountForSwap(t *testing.T) {
+	tests := []struct {
+		name        string
+		tableName   string
+		countReturn int64
+		countError  error
+		expectCount int64
+		expectError bool
+	}{
+		{
+			name:        "successful new table count for swap",
+			tableName:   "users",
+			countReturn: 1000,
+			countError:  nil,
+			expectCount: 1000,
+			expectError: false,
+		},
+		{
+			name:        "new table count error for swap",
+			tableName:   "nonexistent",
+			countReturn: 0,
+			countError:  assert.AnError,
+			expectCount: 0,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockDB := &MockDB{}
+			logger := logrus.New()
+			logger.SetLevel(logrus.PanicLevel)
+			client := &MySQLClient{db: nil, logger: logger}
+
+			// COUNT(*)クエリのモック設定 (_tableName_new用)
+			expectedNewTableName := fmt.Sprintf("_%s_new", tt.tableName)
+			if tt.countError != nil {
+				mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+					return strings.Contains(query, "COUNT(*)")
+				})).Return(tt.countError)
+			} else {
+				mockDB.On("Get", mock.Anything, mock.MatchedBy(func(query string) bool {
+					return strings.Contains(query, "COUNT(*)") && strings.Contains(query, expectedNewTableName)
+				})).Run(func(args mock.Arguments) {
+					dest := args.Get(0).(*int64)
+					*dest = tt.countReturn
+				}).Return(nil)
+			}
+
+			// テスト用に直接mockDBを使用
+			count, err := client.getTableRowCountForSwapWithDB(mockDB, expectedNewTableName)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Equal(t, int64(0), count)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectCount, count)
 			}
 
 			mockDB.AssertExpectations(t)

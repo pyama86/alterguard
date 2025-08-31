@@ -30,6 +30,16 @@ func (m *MockDBClient) GetNewTableRowCount(tableName string) (int64, error) {
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockDBClient) GetTableRowCountForSwap(table string) (int64, error) {
+	args := m.Called(table)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockDBClient) GetNewTableRowCountForSwap(tableName string) (int64, error) {
+	args := m.Called(tableName)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockDBClient) ExecuteAlter(alterStatement string) error {
 	args := m.Called(alterStatement)
 	return args.Error(0)
@@ -434,8 +444,8 @@ func TestCheckRowCountDifference(t *testing.T) {
 			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, tt.dryRun)
 
 			// モック設定
-			mockDB.On("GetTableRowCount", tt.tableName).Return(tt.originalCount, nil)
-			mockDB.On("GetNewTableRowCount", tt.tableName).Return(tt.newCount, nil)
+			mockDB.On("GetTableRowCountForSwap", tt.tableName).Return(tt.originalCount, nil)
+			mockDB.On("GetNewTableRowCountForSwap", tt.tableName).Return(tt.newCount, nil)
 
 			if tt.expectWarning {
 				taskName := "swap-row-count-check"
@@ -514,8 +524,8 @@ func TestSwapTableWithRowCountCheck(t *testing.T) {
 			mockDB.On("TableExists", newTableName).Return(true, nil)
 
 			// レコード件数チェック用
-			mockDB.On("GetTableRowCount", tt.tableName).Return(tt.originalCount, nil)
-			mockDB.On("GetNewTableRowCount", tt.tableName).Return(tt.newCount, nil)
+			mockDB.On("GetTableRowCountForSwap", tt.tableName).Return(tt.originalCount, nil)
+			mockDB.On("GetNewTableRowCountForSwap", tt.tableName).Return(tt.newCount, nil)
 
 			if !tt.expectSwap {
 				// レコード件数チェック失敗時の警告通知
@@ -654,8 +664,8 @@ func TestSwapTable(t *testing.T) {
 			}
 
 			// レコード件数チェック用のモック設定
-			mockDB.On("GetTableRowCount", tt.tableName).Return(int64(1000), nil)
-			mockDB.On("GetNewTableRowCount", tt.tableName).Return(int64(980), nil)
+			mockDB.On("GetTableRowCountForSwap", tt.tableName).Return(int64(1000), nil)
+			mockDB.On("GetNewTableRowCountForSwap", tt.tableName).Return(int64(980), nil)
 
 			expectedQuery := fmt.Sprintf("`RENAME TABLE %s TO %s_old, _%s_new TO %s`", tt.tableName, tt.tableName, tt.tableName, tt.tableName)
 			taskName := "swap"
@@ -917,8 +927,8 @@ func TestSwapTableConcurrentMonitoring(t *testing.T) {
 	mockDB.On("TableExists", newTableName).Return(true, nil)
 
 	// レコード件数チェック用のモック設定
-	mockDB.On("GetTableRowCount", tableName).Return(int64(1000), nil)
-	mockDB.On("GetNewTableRowCount", tableName).Return(int64(980), nil)
+	mockDB.On("GetTableRowCountForSwap", tableName).Return(int64(1000), nil)
+	mockDB.On("GetNewTableRowCountForSwap", tableName).Return(int64(980), nil)
 
 	mockSlack.On("NotifyStartWithQuery", "swap", tableName, expectedQuery, int64(0)).Return(nil)
 	mockDB.On("SetSessionConfig", 0, 0).Return(nil)
