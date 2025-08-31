@@ -747,12 +747,12 @@ func (m *Manager) checkNewTableExists(taskName, tableName string) error {
 }
 
 func (m *Manager) checkRowCountDifference(tableName string) error {
-	originalCount, err := m.db.GetTableRowCount(tableName)
+	originalCount, err := m.db.GetTableRowCountForSwap(tableName)
 	if err != nil {
 		return fmt.Errorf("failed to get original table row count: %w", err)
 	}
 
-	newCount, err := m.db.GetNewTableRowCount(tableName)
+	newCount, err := m.db.GetNewTableRowCountForSwap(tableName)
 	if err != nil {
 		return fmt.Errorf("failed to get new table row count: %w", err)
 	}

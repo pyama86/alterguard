@@ -14,6 +14,8 @@ import (
 type Client interface {
 	GetTableRowCount(table string) (int64, error)
 	GetNewTableRowCount(tableName string) (int64, error)
+	GetTableRowCountForSwap(table string) (int64, error)
+	GetNewTableRowCountForSwap(tableName string) (int64, error)
 	ExecuteAlter(alterStatement string) error
 	ExecuteAlterWithDryRun(alterStatement string, dryRun bool) error
 	SetSessionConfig(lockWaitTimeout, innodbLockWaitTimeout int) error
@@ -106,6 +108,26 @@ func (c *MySQLClient) GetTableRowCount(table string) (int64, error) {
 func (c *MySQLClient) GetNewTableRowCount(tableName string) (int64, error) {
 	newTableName := fmt.Sprintf("_%s_new", tableName)
 	return c.GetTableRowCount(newTableName)
+}
+
+func (c *MySQLClient) GetTableRowCountForSwap(table string) (int64, error) {
+	var count int64
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
+
+	c.logger.Infof("Getting exact row count for swap using COUNT(*): %s", table)
+
+	err := c.db.Get(&count, countQuery)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get exact table row count for swap %s: %w", table, err)
+	}
+
+	c.logger.Infof("Exact row count for swap table %s: %d rows", table, count)
+	return count, nil
+}
+
+func (c *MySQLClient) GetNewTableRowCountForSwap(tableName string) (int64, error) {
+	newTableName := fmt.Sprintf("_%s_new", tableName)
+	return c.GetTableRowCountForSwap(newTableName)
 }
 
 func (c *MySQLClient) ExecuteAlter(alterStatement string) error {
@@ -298,4 +320,19 @@ func (c *MySQLClient) executeAlterWithDB(db DBExecutor, alterStatement string) e
 		return fmt.Errorf("failed to execute ALTER statement [%s]: %w", alterStatement, err)
 	}
 	return nil
+}
+
+func (c *MySQLClient) getTableRowCountForSwapWithDB(db DBExecutor, table string) (int64, error) {
+	var count int64
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
+
+	c.logger.Infof("Getting exact row count for swap using COUNT(*): %s", table)
+
+	err := db.Get(&count, countQuery)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get exact table row count for swap %s: %w", table, err)
+	}
+
+	c.logger.Infof("Exact row count for swap table %s: %d rows", table, count)
+	return count, nil
 }
