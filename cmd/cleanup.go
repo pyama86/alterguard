@@ -83,10 +83,19 @@ func cleanupTable(tableName string) error {
 	// Initialize task manager
 	taskManager := task.NewManager(dbClient, ptoscExecutor, slackNotifier, logger, cfg, dryRun)
 
+	if dropTriggers {
+		logger.Infof("Dropping triggers for %s", tableName)
+		if err := taskManager.CleanupTriggers(tableName); err != nil {
+			logger.Errorf("Failed to drop triggers: %v", err)
+			return fmt.Errorf("trigger cleanup failed: %w", err)
+		}
+		logger.Infof("Trigger cleanup completed for %s", tableName)
+	}
+
 	// Execute cleanup operations
 	if dropTable {
 		logger.Infof("Dropping backup table for %s", tableName)
-		if err := taskManager.CleanupTable(tableName); err != nil {
+		if err := taskManager.CleanupOldTable(tableName); err != nil {
 			logger.Errorf("Failed to drop backup table: %v", err)
 			return fmt.Errorf("backup table cleanup failed: %w", err)
 		}
@@ -100,15 +109,6 @@ func cleanupTable(tableName string) error {
 			return fmt.Errorf("new table cleanup failed: %w", err)
 		}
 		logger.Infof("New table cleanup completed for %s", tableName)
-	}
-
-	if dropTriggers {
-		logger.Infof("Dropping triggers for %s", tableName)
-		if err := taskManager.CleanupTriggers(tableName); err != nil {
-			logger.Errorf("Failed to drop triggers: %v", err)
-			return fmt.Errorf("trigger cleanup failed: %w", err)
-		}
-		logger.Infof("Trigger cleanup completed for %s", tableName)
 	}
 
 	logger.Infof("Cleanup completed successfully for %s", tableName)

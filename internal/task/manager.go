@@ -558,7 +558,7 @@ func (m *Manager) SwapTable(tableName string) error {
 	return nil
 }
 
-func (m *Manager) CleanupTable(tableName string) error {
+func (m *Manager) CleanupOldTable(tableName string) error {
 	m.logger.Infof("Starting cleanup for table %s", tableName)
 
 	dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s_old", tableName)

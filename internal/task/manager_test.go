@@ -754,7 +754,7 @@ func TestCleanupTable(t *testing.T) {
 				mockDB.On("ExecuteAlter", expectedSQL).Return(nil)
 			}
 
-			err := manager.CleanupTable(tt.tableName)
+			err := manager.CleanupOldTable(tt.tableName)
 
 			require.NoError(t, err)
 			mockDB.AssertExpectations(t)
