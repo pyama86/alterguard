@@ -95,7 +95,7 @@ func cleanupTable(tableName string) error {
 	// Execute cleanup operations
 	if dropTable {
 		logger.Infof("Dropping backup table for %s", tableName)
-		if err := taskManager.CleanupTable(tableName); err != nil {
+		if err := taskManager.CleanupOldTable(tableName); err != nil {
 			logger.Errorf("Failed to drop backup table: %v", err)
 			return fmt.Errorf("backup table cleanup failed: %w", err)
 		}
