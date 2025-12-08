@@ -11,11 +11,12 @@ import (
 )
 
 type CommonConfig struct {
-	PtOsc           PtOscConfig           `yaml:"pt_osc"`
-	Alert           AlertConfig           `yaml:"alert"`
-	PtOscThreshold  int64                 `yaml:"pt_osc_threshold"`
-	SessionConfig   SessionConfig         `yaml:"session_config"`
-	ConnectionCheck ConnectionCheckConfig `yaml:"connection_check"`
+	PtOsc               PtOscConfig           `yaml:"pt_osc"`
+	Alert               AlertConfig           `yaml:"alert"`
+	PtOscThreshold      int64                 `yaml:"pt_osc_threshold"`
+	SessionConfig       SessionConfig         `yaml:"session_config"`
+	ConnectionCheck     ConnectionCheckConfig `yaml:"connection_check"`
+	DisableAnalyzeTable bool                  `yaml:"disable_analyze_table"`
 }
 
 type PtOscConfig struct {

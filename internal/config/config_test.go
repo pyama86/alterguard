@@ -2,6 +2,8 @@ package config
 
 import (
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadConfigWithoutTasks(t *testing.T) {
@@ -122,6 +124,58 @@ func TestPtOscThresholdEnvironmentVariable(t *testing.T) {
 				if cfg.Common.PtOscThreshold != tt.expectedValue {
 					t.Errorf("PtOscThreshold = %v, want %v", cfg.Common.PtOscThreshold, tt.expectedValue)
 				}
+			}
+		})
+	}
+}
+
+func TestDisableAnalyzeTable(t *testing.T) {
+	tests := []struct {
+		name      string
+		yamlData  string
+		wantValue bool
+	}{
+		{
+			name: "disable_analyze_table not specified - defaults to false (enabled)",
+			yamlData: `
+pt_osc:
+  charset: utf8mb4
+pt_osc_threshold: 1000
+`,
+			wantValue: false,
+		},
+		{
+			name: "disable_analyze_table explicitly set to true (disabled)",
+			yamlData: `
+pt_osc:
+  charset: utf8mb4
+pt_osc_threshold: 1000
+disable_analyze_table: true
+`,
+			wantValue: true,
+		},
+		{
+			name: "disable_analyze_table explicitly set to false (enabled)",
+			yamlData: `
+pt_osc:
+  charset: utf8mb4
+pt_osc_threshold: 1000
+disable_analyze_table: false
+`,
+			wantValue: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &CommonConfig{}
+			err := yaml.Unmarshal([]byte(tt.yamlData), config)
+			if err != nil {
+				t.Fatalf("Failed to unmarshal YAML: %v", err)
+			}
+
+			if config.DisableAnalyzeTable != tt.wantValue {
+				t.Errorf("DisableAnalyzeTable = %v, want %v", config.DisableAnalyzeTable, tt.wantValue)
 			}
 		})
 	}

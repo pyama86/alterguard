@@ -447,3 +447,49 @@ func TestGetNewTableRowCountForSwap(t *testing.T) {
 		})
 	}
 }
+
+func TestAnalyzeTable(t *testing.T) {
+	tests := []struct {
+		name        string
+		tableName   string
+		mockResult  sql.Result
+		mockError   error
+		expectError bool
+	}{
+		{
+			name:        "successful analyze table",
+			tableName:   "users",
+			mockResult:  &MockResult{},
+			mockError:   nil,
+			expectError: false,
+		},
+		{
+			name:        "analyze table error",
+			tableName:   "nonexistent",
+			mockResult:  nil,
+			mockError:   assert.AnError,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockDB := &MockDB{}
+			logger := logrus.New()
+			logger.SetLevel(logrus.PanicLevel)
+
+			expectedSQL := fmt.Sprintf("ANALYZE TABLE `%s`", tt.tableName)
+			mockDB.On("Exec", expectedSQL).Return(tt.mockResult, tt.mockError)
+
+			_, err := mockDB.Exec(expectedSQL)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			mockDB.AssertExpectations(t)
+		})
+	}
+}

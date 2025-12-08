@@ -75,6 +75,11 @@ func (m *MockDBClient) CheckNewTableExists(tableName string) (bool, error) {
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockDBClient) AnalyzeTable(tableName string) error {
+	args := m.Called(tableName)
+	return args.Error(0)
+}
+
 func (m *MockDBClient) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -514,6 +519,7 @@ func TestSwapTableWithRowCountCheck(t *testing.T) {
 						LockWaitTimeout:       0,
 						InnodbLockWaitTimeout: 0,
 					},
+					DisableAnalyzeTable: false,
 				},
 			}
 			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
@@ -533,6 +539,9 @@ func TestSwapTableWithRowCountCheck(t *testing.T) {
 					return strings.Contains(msg, "row count difference exceeds threshold")
 				})).Return(nil)
 			} else {
+				// ANALYZE TABLEのモック設定（swap前にnewテーブルに対して実行）
+				mockDB.On("AnalyzeTable", newTableName).Return(nil)
+
 				// スワップ実行時の通知
 				expectedQuery := fmt.Sprintf("`RENAME TABLE %s TO %s_old, _%s_new TO %s`", tt.tableName, tt.tableName, tt.tableName, tt.tableName)
 				mockSlack.On("NotifyStartWithQuery", "swap", tt.tableName, expectedQuery, int64(0)).Return(nil)
@@ -638,6 +647,7 @@ func TestSwapTable(t *testing.T) {
 						LockWaitTimeout:       0,
 						InnodbLockWaitTimeout: 0,
 					},
+					DisableAnalyzeTable: false,
 				},
 			}
 
@@ -666,6 +676,12 @@ func TestSwapTable(t *testing.T) {
 			// レコード件数チェック用のモック設定
 			mockDB.On("GetTableRowCountForSwap", tt.tableName).Return(int64(1000), nil)
 			mockDB.On("GetNewTableRowCountForSwap", tt.tableName).Return(int64(980), nil)
+
+			// ANALYZE TABLEのモック設定（swap前にnewテーブルに対して実行）
+			if !isDryRun {
+				newTableName := fmt.Sprintf("_%s_new", tt.tableName)
+				mockDB.On("AnalyzeTable", newTableName).Return(nil)
+			}
 
 			expectedQuery := fmt.Sprintf("`RENAME TABLE %s TO %s_old, _%s_new TO %s`", tt.tableName, tt.tableName, tt.tableName, tt.tableName)
 			taskName := "swap"
@@ -913,6 +929,7 @@ func TestSwapTableConcurrentMonitoring(t *testing.T) {
 				LockWaitTimeout:       0,
 				InnodbLockWaitTimeout: 0,
 			},
+			DisableAnalyzeTable: false,
 		},
 	}
 
@@ -929,6 +946,9 @@ func TestSwapTableConcurrentMonitoring(t *testing.T) {
 	// レコード件数チェック用のモック設定
 	mockDB.On("GetTableRowCountForSwap", tableName).Return(int64(1000), nil)
 	mockDB.On("GetNewTableRowCountForSwap", tableName).Return(int64(980), nil)
+
+	// ANALYZE TABLEのモック設定（swap前にnewテーブルに対して実行）
+	mockDB.On("AnalyzeTable", newTableName).Return(nil)
 
 	mockSlack.On("NotifyStartWithQuery", "swap", tableName, expectedQuery, int64(0)).Return(nil)
 	mockDB.On("SetSessionConfig", 0, 0).Return(nil)
