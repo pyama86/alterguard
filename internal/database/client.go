@@ -23,6 +23,7 @@ type Client interface {
 	CheckNewTableExists(tableName string) (bool, error)
 	HasOtherActiveConnections() (bool, string, error)
 	GetCurrentUser() (string, error)
+	AnalyzeTable(tableName string) error
 	Close() error
 }
 
@@ -248,6 +249,23 @@ func (c *MySQLClient) GetCurrentUser() (string, error) {
 	}
 
 	return user, nil
+}
+
+func (c *MySQLClient) AnalyzeTable(tableName string) error {
+	analyzeSQL := fmt.Sprintf("ANALYZE TABLE `%s`", tableName)
+	c.logger.Infof("Executing ANALYZE TABLE: %s", analyzeSQL)
+	start := time.Now()
+
+	_, err := c.db.Exec(analyzeSQL)
+	duration := time.Since(start)
+
+	if err != nil {
+		c.logger.Errorf("ANALYZE TABLE failed (duration: %v): %s - Error: %v", duration, analyzeSQL, err)
+		return fmt.Errorf("failed to execute ANALYZE TABLE [%s]: %w", tableName, err)
+	}
+
+	c.logger.Infof("ANALYZE TABLE completed (duration: %v): %s", duration, analyzeSQL)
+	return nil
 }
 
 func (c *MySQLClient) Close() error {

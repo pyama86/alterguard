@@ -490,6 +490,19 @@ func (m *Manager) SwapTable(tableName string) error {
 		return err
 	}
 
+	// swap前にnewテーブルに対してANALYZE TABLEを実行
+	if !m.config.Common.DisableAnalyzeTable {
+		newTableName := fmt.Sprintf("_%s_new", tableName)
+		if m.dryRun {
+			m.logger.Infof("[DRY RUN] Would execute ANALYZE TABLE for %s before swap", newTableName)
+		} else {
+			m.logger.Infof("Executing ANALYZE TABLE for %s before swap", newTableName)
+			if err := m.db.AnalyzeTable(newTableName); err != nil {
+				m.logger.Warnf("ANALYZE TABLE failed for %s: %v", newTableName, err)
+			}
+		}
+	}
+
 	swapSQL := fmt.Sprintf("RENAME TABLE %s TO %s_old, _%s_new TO %s",
 		tableName, tableName, tableName, tableName)
 	cleanedQuery := strings.ReplaceAll(swapSQL, "`", "")
