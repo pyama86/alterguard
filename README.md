@@ -66,6 +66,9 @@ alert:
 session_config:
   lock_wait_timeout: 10
   innodb_lock_wait_timeout: 10
+
+# Disable ANALYZE TABLE execution before table swap (default: false, enabled)
+disable_analyze_table: false
 ```
 
 #### Task Definition (`tasks.yaml`)
@@ -110,9 +113,10 @@ session_config:
 
 #### Global Settings
 
-| Option             | Type  | Default | Description                          |
-| ------------------ | ----- | ------- | ------------------------------------ |
-| `pt_osc_threshold` | int64 | -       | Row count threshold for using pt-osc |
+| Option                  | Type  | Default | Description                                                    |
+| ----------------------- | ----- | ------- | -------------------------------------------------------------- |
+| `pt_osc_threshold`      | int64 | -       | Row count threshold for using pt-osc                           |
+| `disable_analyze_table` | bool  | false   | Disable ANALYZE TABLE execution before table swap (default: enabled) |
 
 #### Alert Section
 
@@ -167,6 +171,8 @@ Executes all tasks sequentially. Tables with row count ≤ `pt_osc_threshold` ar
 #### `swap [table_name]`
 
 Swaps the backup table created by pt-online-schema-change with the original table.
+
+Before swapping, executes ANALYZE TABLE on `_original_table_new` to update statistics (can be disabled with `disable_analyze_table: true`).
 
 Performs RENAME TABLE operations:
 
