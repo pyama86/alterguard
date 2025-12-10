@@ -7,7 +7,7 @@ pt_osc:
   statistics: true
   dry_run: false
 
-pt_osc_threshold: 1000000
+pt_osc_threshold: 1000
 
 alert:
   metadata_lock_threshold_seconds: 30

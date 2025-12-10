@@ -7,6 +7,18 @@ pt_osc:
   no_drop_new_table: true
   no_drop_triggers: true
 
+pt_archiver:
+  enabled: true
+  limit: 10000
+  commit_each: true
+  progress: 10000
+  max_lag: 2.0
+  no_check_charset: true
+  bulk_delete: true
+  primary_key_only: true
+  statistics: true
+  where: "1=1"
+
 pt_osc_threshold: 1000
 alert:
   metadata_lock_threshold_seconds: 30

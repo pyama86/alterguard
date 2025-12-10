@@ -56,6 +56,7 @@ func NewMySQLClient(dsn string, logger *logrus.Logger) (*MySQLClient, error) {
 
 func (c *MySQLClient) GetTableRowCount(table string) (int64, error) {
 	var count int64
+	var usedMethod string
 
 	// 第一選択: INNODB_SYS_TABLESTATS (MySQL 5.7)
 	query := `
@@ -93,14 +94,30 @@ func (c *MySQLClient) GetTableRowCount(table string) (int64, error) {
 					return 0, fmt.Errorf("failed to get table row count for %s: %w", table, err)
 				}
 				c.logger.Infof("Used COUNT(*) for table %s: %d rows", table, count)
-			} else {
-				c.logger.Debugf("Used information_schema.TABLES for table %s: %d rows", table, count)
+				return count, nil
 			}
+			usedMethod = "information_schema.TABLES"
+			c.logger.Debugf("Used information_schema.TABLES for table %s: %d rows", table, count)
 		} else {
+			usedMethod = "INNODB_TABLESTATS"
 			c.logger.Debugf("Used INNODB_TABLESTATS for table %s: %d rows", table, count)
 		}
 	} else {
+		usedMethod = "INNODB_SYS_TABLESTATS"
 		c.logger.Debugf("Used INNODB_SYS_TABLESTATS for table %s: %d rows", table, count)
+	}
+
+	// 統計情報が0件の場合は、COUNT(*)で正確な件数を確認
+	if count == 0 {
+		c.logger.Infof("Stats show 0 rows for table %s (from %s), verifying with COUNT(*)", table, usedMethod)
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
+		var actualCount int64
+		err = c.db.Get(&actualCount, countQuery)
+		if err != nil {
+			return 0, fmt.Errorf("failed to verify table row count with COUNT(*) for %s: %w", table, err)
+		}
+		c.logger.Infof("Verified with COUNT(*) for table %s: %d rows", table, actualCount)
+		return actualCount, nil
 	}
 
 	return count, nil
@@ -282,6 +299,7 @@ type DBExecutor interface {
 
 func (c *MySQLClient) getTableRowCountWithDB(db DBExecutor, table string) (int64, error) {
 	var count int64
+	var usedMethod string
 
 	// 第一選択: INNODB_SYS_TABLESTATS (MySQL 5.7)
 	query := `
@@ -319,14 +337,30 @@ func (c *MySQLClient) getTableRowCountWithDB(db DBExecutor, table string) (int64
 					return 0, fmt.Errorf("failed to get table row count for %s: %w", table, err)
 				}
 				c.logger.Infof("Used COUNT(*) for table %s: %d rows", table, count)
-			} else {
-				c.logger.Debugf("Used information_schema.TABLES for table %s: %d rows", table, count)
+				return count, nil
 			}
+			usedMethod = "information_schema.TABLES"
+			c.logger.Debugf("Used information_schema.TABLES for table %s: %d rows", table, count)
 		} else {
+			usedMethod = "INNODB_TABLESTATS"
 			c.logger.Debugf("Used INNODB_TABLESTATS for table %s: %d rows", table, count)
 		}
 	} else {
+		usedMethod = "INNODB_SYS_TABLESTATS"
 		c.logger.Debugf("Used INNODB_SYS_TABLESTATS for table %s: %d rows", table, count)
+	}
+
+	// 統計情報が0件の場合は、COUNT(*)で正確な件数を確認
+	if count == 0 {
+		c.logger.Infof("Stats show 0 rows for table %s (from %s), verifying with COUNT(*)", table, usedMethod)
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
+		var actualCount int64
+		err = db.Get(&actualCount, countQuery)
+		if err != nil {
+			return 0, fmt.Errorf("failed to verify table row count with COUNT(*) for %s: %w", table, err)
+		}
+		c.logger.Infof("Verified with COUNT(*) for table %s: %d rows", table, actualCount)
+		return actualCount, nil
 	}
 
 	return count, nil

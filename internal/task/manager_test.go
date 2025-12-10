@@ -102,6 +102,15 @@ func (m *MockPtOscExecutor) ExecuteAlterWithDryRunResult(tableName, alterStateme
 	return args.Get(0).(*ptosc.DryRunResult), args.Error(1)
 }
 
+type MockPtArchiverExecutor struct {
+	mock.Mock
+}
+
+func (m *MockPtArchiverExecutor) ExecutePurge(tableName string, ptArchiverConfig config.PtArchiverConfig, dsn string, dryRun bool) error {
+	args := m.Called(tableName, ptArchiverConfig, dsn, dryRun)
+	return args.Error(0)
+}
+
 type MockSlackNotifier struct {
 	mock.Mock
 }
@@ -343,7 +352,8 @@ func TestExecuteAllTasks(t *testing.T) {
 			}
 
 			dryRun := tt.expectedMethod == "DRY_RUN"
-			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, dryRun)
+			mockPtArchiver := new(MockPtArchiverExecutor)
+			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, dryRun)
 			err := manager.ExecuteAllTasks()
 
 			if tt.expectError {
@@ -443,10 +453,11 @@ func TestCheckRowCountDifference(t *testing.T) {
 
 			mockDB := &MockDBClient{}
 			mockPtOsc := &MockPtOscExecutor{}
+			mockPtArchiver := &MockPtArchiverExecutor{}
 			mockSlack := &MockSlackNotifier{}
 
 			cfg := &config.Config{}
-			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, tt.dryRun)
+			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, tt.dryRun)
 
 			// モック設定
 			mockDB.On("GetTableRowCountForSwap", tt.tableName).Return(tt.originalCount, nil)
@@ -522,7 +533,8 @@ func TestSwapTableWithRowCountCheck(t *testing.T) {
 					DisableAnalyzeTable: false,
 				},
 			}
-			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+			mockPtArchiver := &MockPtArchiverExecutor{}
+			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, false)
 
 			// テーブル存在確認
 			mockDB.On("TableExists", tt.tableName).Return(true, nil)
@@ -652,7 +664,8 @@ func TestSwapTable(t *testing.T) {
 			}
 
 			isDryRun := tt.name == "dry run mode"
-			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, isDryRun)
+			mockPtArchiver := &MockPtArchiverExecutor{}
+			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, isDryRun)
 
 			// テーブル存在確認のモック設定
 			if tt.tableExistsError != nil {
@@ -751,10 +764,11 @@ func TestCleanupTable(t *testing.T) {
 
 			mockDB := &MockDBClient{}
 			mockPtOsc := &MockPtOscExecutor{}
+			mockPtArchiver := &MockPtArchiverExecutor{}
 			mockSlack := &MockSlackNotifier{}
 
 			cfg := &config.Config{}
-			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, tt.dryRun)
+			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, tt.dryRun)
 
 			expectedSQL := "DROP TABLE IF EXISTS test_table_old"
 			expectedQuery := "`DROP TABLE IF EXISTS test_table_old`"
@@ -822,7 +836,8 @@ func TestCleanupTriggers(t *testing.T) {
 			cfg := &config.Config{
 				DSN: "user:password@tcp(localhost:3306)/testdb?charset=utf8mb4",
 			}
-			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, tt.dryRun)
+			mockPtArchiver := &MockPtArchiverExecutor{}
+			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, tt.dryRun)
 
 			expectedTriggers := []string{
 				"pt_osc_testdb_test_table_del",
@@ -903,7 +918,8 @@ func TestPtOscWithNewTableCount(t *testing.T) {
 	mockSlack.On("NotifyPtOscCompletionWithNewTableCount", "pt-osc", "large_table", int64(5000), int64(5001), mock.Anything, mock.Anything).Return(nil)
 	mockPtOsc.On("ExecuteAlter", "large_table", "ADD COLUMN new_col INT", config.PtOscConfig{}, "test-dsn", false).Return(nil)
 
-	manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+	mockPtArchiver := &MockPtArchiverExecutor{}
+	manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, false)
 	err := manager.ExecuteAllTasks()
 
 	require.NoError(t, err)
@@ -933,7 +949,8 @@ func TestSwapTableConcurrentMonitoring(t *testing.T) {
 		},
 	}
 
-	manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+	mockPtArchiver := &MockPtArchiverExecutor{}
+	manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, false)
 
 	tableName := "test_table"
 	expectedQuery := fmt.Sprintf("`RENAME TABLE %s TO %s_old, _%s_new TO %s`", tableName, tableName, tableName, tableName)
@@ -1044,7 +1061,8 @@ func TestConnectionCheck(t *testing.T) {
 				DSN: "test-dsn",
 			}
 
-			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+			mockPtArchiver := &MockPtArchiverExecutor{}
+			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, false)
 
 			// 接続チェックが有効な場合のモック設定
 			if tt.connectionCheckEnabled {
@@ -1125,7 +1143,8 @@ func TestExtractDatabaseNameFromDSN(t *testing.T) {
 			mockSlack := &MockSlackNotifier{}
 
 			cfg := &config.Config{DSN: tt.dsn}
-			manager := NewManager(mockDB, mockPtOsc, mockSlack, logger, cfg, false)
+			mockPtArchiver := &MockPtArchiverExecutor{}
+			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, false)
 
 			result, err := manager.extractDatabaseNameFromDSN()
 

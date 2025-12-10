@@ -5,6 +5,7 @@ import (
 
 	"github.com/pyama86/alterguard/internal/config"
 	"github.com/pyama86/alterguard/internal/database"
+	"github.com/pyama86/alterguard/internal/ptarchiver"
 	"github.com/pyama86/alterguard/internal/ptosc"
 	"github.com/pyama86/alterguard/internal/slack"
 	"github.com/pyama86/alterguard/internal/task"
@@ -71,6 +72,9 @@ func cleanupTable(tableName string) error {
 	// Initialize pt-osc executor (not used for cleanup but required for manager)
 	ptoscExecutor := ptosc.NewPtOscExecutor(logger)
 
+	// Initialize pt-archiver executor (used for cleanup if enabled)
+	ptarchiverExecutor := ptarchiver.NewPtArchiverExecutor(logger)
+
 	// Initialize Slack notifier
 	slackNotifier, err := slack.NewSlackNotifierWithEnvironment(logger, cfg.Environment)
 	if err != nil {
@@ -81,7 +85,7 @@ func cleanupTable(tableName string) error {
 	logger.Info("Slack notifier initialized")
 
 	// Initialize task manager
-	taskManager := task.NewManager(dbClient, ptoscExecutor, slackNotifier, logger, cfg, dryRun)
+	taskManager := task.NewManager(dbClient, ptoscExecutor, ptarchiverExecutor, slackNotifier, logger, cfg, dryRun)
 
 	if dropTriggers {
 		logger.Infof("Dropping triggers for %s", tableName)
