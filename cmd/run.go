@@ -5,6 +5,7 @@ import (
 
 	"github.com/pyama86/alterguard/internal/config"
 	"github.com/pyama86/alterguard/internal/database"
+	"github.com/pyama86/alterguard/internal/ptarchiver"
 	"github.com/pyama86/alterguard/internal/ptosc"
 	"github.com/pyama86/alterguard/internal/slack"
 	"github.com/pyama86/alterguard/internal/task"
@@ -86,6 +87,9 @@ func runTasks() error {
 	// Initialize pt-osc executor
 	ptoscExecutor := ptosc.NewPtOscExecutor(logger)
 
+	// Initialize pt-archiver executor
+	ptarchiverExecutor := ptarchiver.NewPtArchiverExecutor(logger)
+
 	// Initialize Slack notifier
 	slackNotifier, err := slack.NewSlackNotifierWithEnvironment(logger, cfg.Environment)
 	if err != nil {
@@ -96,7 +100,7 @@ func runTasks() error {
 	logger.Info("Slack notifier initialized")
 
 	// Initialize task manager
-	taskManager := task.NewManager(dbClient, ptoscExecutor, slackNotifier, logger, cfg, dryRun)
+	taskManager := task.NewManager(dbClient, ptoscExecutor, ptarchiverExecutor, slackNotifier, logger, cfg, dryRun)
 
 	// Execute all tasks
 	logger.Info("Starting task execution")

@@ -1,6 +1,6 @@
 services:
   mysql:
-    image: mysql:8
+    image: mysql:8.0
     container_name: alterguard-mysql
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
@@ -18,8 +18,8 @@ services:
 
   pt-toolkit:
     # amd64 version
-    #image: perconalab/percona-toolkit:latest
-    image: perconalab/percona-toolkit:3.7.0-aarch64
+    image: perconalab/percona-toolkit:latest
+    #image: perconalab/percona-toolkit:3.7.0-aarch64
     container_name: alterguard-pt-toolkit
     depends_on:
       mysql:

@@ -9,18 +9,20 @@ import (
 
 	"github.com/pyama86/alterguard/internal/config"
 	"github.com/pyama86/alterguard/internal/database"
+	"github.com/pyama86/alterguard/internal/ptarchiver"
 	"github.com/pyama86/alterguard/internal/ptosc"
 	"github.com/pyama86/alterguard/internal/slack"
 	"github.com/sirupsen/logrus"
 )
 
 type Manager struct {
-	db     database.Client
-	ptosc  ptosc.Executor
-	slack  slack.Notifier
-	logger *logrus.Logger
-	config *config.Config
-	dryRun bool
+	db         database.Client
+	ptosc      ptosc.Executor
+	ptarchiver ptarchiver.Executor
+	slack      slack.Notifier
+	logger     *logrus.Logger
+	config     *config.Config
+	dryRun     bool
 }
 
 type QueryResult struct {
@@ -43,14 +45,15 @@ type TableGroup struct {
 	RowCount     int64
 }
 
-func NewManager(db database.Client, ptoscExec ptosc.Executor, slackNotifier slack.Notifier, logger *logrus.Logger, cfg *config.Config, dryRun bool) *Manager {
+func NewManager(db database.Client, ptoscExec ptosc.Executor, ptarchiverExec ptarchiver.Executor, slackNotifier slack.Notifier, logger *logrus.Logger, cfg *config.Config, dryRun bool) *Manager {
 	return &Manager{
-		db:     db,
-		ptosc:  ptoscExec,
-		slack:  slackNotifier,
-		logger: logger,
-		config: cfg,
-		dryRun: dryRun,
+		db:         db,
+		ptosc:      ptoscExec,
+		ptarchiver: ptarchiverExec,
+		slack:      slackNotifier,
+		logger:     logger,
+		config:     cfg,
+		dryRun:     dryRun,
 	}
 }
 
@@ -574,6 +577,14 @@ func (m *Manager) SwapTable(tableName string) error {
 func (m *Manager) CleanupOldTable(tableName string) error {
 	m.logger.Infof("Starting cleanup for table %s", tableName)
 
+	// pt-archiverが有効な場合、DROP前にデータを削除
+	if m.config.Common.PtArchiver.Enabled {
+		oldTableName := fmt.Sprintf("%s_old", tableName)
+		if err := m.PurgeOldTable(oldTableName); err != nil {
+			return fmt.Errorf("failed to purge old table before cleanup: %w", err)
+		}
+	}
+
 	dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s_old", tableName)
 	cleanedQuery := strings.ReplaceAll(dropSQL, "`", "")
 	quotedQuery := fmt.Sprintf("`%s`", cleanedQuery)
@@ -612,6 +623,106 @@ func (m *Manager) CleanupOldTable(tableName string) error {
 
 	m.logger.Infof("Cleanup completed for table %s", tableName)
 	return nil
+}
+
+func (m *Manager) PurgeOldTable(tableName string) error {
+	m.logger.Infof("Starting purge for table %s using pt-archiver", tableName)
+
+	taskName := "pt-archiver"
+	if m.dryRun {
+		taskName = "pt-archiver (DRY RUN)"
+	}
+
+	ptArchiverCommand := m.buildPtArchiverCommand(tableName)
+	cleanedCommand := strings.ReplaceAll(ptArchiverCommand, "`", "")
+	quotedCommand := fmt.Sprintf("`%s`", cleanedCommand)
+
+	if err := m.slack.NotifyStartWithQuery(taskName, tableName, quotedCommand, 0); err != nil {
+		m.logger.Errorf("Failed to send start notification: %v", err)
+	}
+
+	start := time.Now()
+
+	if err := m.ptarchiver.ExecutePurge(tableName, m.config.Common.PtArchiver, m.config.DSN, m.dryRun); err != nil {
+		if slackErr := m.slack.NotifyFailureWithQuery(taskName, tableName, quotedCommand, 0, err); slackErr != nil {
+			m.logger.Errorf("Failed to send failure notification: %v", slackErr)
+		}
+		return fmt.Errorf("pt-archiver failed: %w", err)
+	}
+
+	duration := time.Since(start)
+
+	var ptArchiverLog string
+	if ptArchiverExecutor, ok := m.ptarchiver.(*ptarchiver.PtArchiverExecutor); ok {
+		ptArchiverLog = ptArchiverExecutor.GetOutputSummary()
+	}
+
+	if ptArchiverLog != "" {
+		if err := m.slack.NotifySuccessWithQueryAndLog(taskName, tableName, quotedCommand, 0, duration, ptArchiverLog); err != nil {
+			m.logger.Errorf("Failed to send success notification: %v", err)
+		}
+	} else {
+		if err := m.slack.NotifySuccessWithQuery(taskName, tableName, quotedCommand, 0, duration); err != nil {
+			m.logger.Errorf("Failed to send success notification: %v", err)
+		}
+	}
+
+	m.logger.Infof("Purge completed for table %s", tableName)
+	return nil
+}
+
+func (m *Manager) buildPtArchiverCommand(tableName string) string {
+	cfg := m.config.Common.PtArchiver
+	var args []string
+
+	args = append(args, "--source=h=HOST,P=PORT,D=DATABASE,t="+tableName)
+	args = append(args, "--user=USER")
+
+	if cfg.Where != "" {
+		args = append(args, fmt.Sprintf("--where=%s", cfg.Where))
+	} else {
+		args = append(args, "--where=1=1")
+	}
+
+	if cfg.Limit > 0 {
+		args = append(args, fmt.Sprintf("--limit=%d", cfg.Limit))
+	}
+
+	if cfg.CommitEach {
+		args = append(args, "--commit-each")
+	}
+
+	args = append(args, "--purge")
+
+	if cfg.Progress > 0 {
+		args = append(args, fmt.Sprintf("--progress=%d", cfg.Progress))
+	}
+
+	if cfg.MaxLag > 0 {
+		args = append(args, fmt.Sprintf("--max-lag=%f", cfg.MaxLag))
+	}
+
+	if cfg.NoCheckCharset {
+		args = append(args, "--no-check-charset")
+	}
+
+	if cfg.BulkDelete {
+		args = append(args, "--bulk-delete")
+	}
+
+	if cfg.PrimaryKeyOnly {
+		args = append(args, "--primary-key-only")
+	}
+
+	if cfg.Statistics {
+		args = append(args, "--statistics")
+	}
+
+	if m.dryRun {
+		args = append(args, "--dry-run")
+	}
+
+	return "pt-archiver " + strings.Join(args, " ")
 }
 
 func (m *Manager) CleanupNewTable(tableName string) error {

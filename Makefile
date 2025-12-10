@@ -7,7 +7,6 @@ LDFLAGS=-ldflags "-s -w -X github.com/pyama86/alterguard/cmd.version=${VERSION}"
 DOCKER_IMAGE=alterguard
 DOCKER_TAG?=latest
 DATABASE_DSN        ?= testuser:testpassword@tcp(127.0.0.1:13306)/testdb
-SLACK_WEBHOOK_URL   ?= https://example.com
 
 GORUN = DATABASE_DSN='$(DATABASE_DSN)' \
         SLACK_WEBHOOK_URL='$(SLACK_WEBHOOK_URL)' \
@@ -86,24 +85,24 @@ run-example:
 # Docker environment commands
 docker-up:
 	@echo "Starting Docker environment..."
-	docker-compose up -d --build --pull=never
+	docker compose up -d --build --pull=never
 	@echo "Waiting for MySQL to be ready..."
-	docker-compose exec mysql mysqladmin ping -h localhost --silent
+	docker compose exec mysql mysqladmin ping -h localhost --silent
 	@echo "Docker environment is ready!"
 
 docker-down:
 	@echo "Stopping Docker environment..."
-	docker-compose down
+	docker compose down
 
 docker-logs:
 	@echo "Showing Docker logs..."
-	docker-compose logs -f
+	docker compose logs -f
 
 run-docker-all: docker-down docker-up run-docker-exec run-docker-swap run-docker-cleanup
 # Run alterguard in Docker environment
 run-docker-exec: docker-up
 	@echo "Running alterguard in Docker environment..."
-	$(GORUN) run --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml --dry-run
+	$(GORUN) run --common-config examples/docker/config-common.yaml --tasks-config examples/docker/tasks.yaml
 
 # Run alterguard swap in Docker environment
 run-docker-swap: docker-up
@@ -118,12 +117,12 @@ run-docker-cleanup: docker-up
 # Run pt-osc directly in Docker environment
 run-pt-osc-docker:
 	@echo "Running pt-online-schema-change directly in Docker environment..."
-	docker-compose exec pt-toolkit pt-online-schema-change --help
+	docker compose exec pt-toolkit pt-online-schema-change --help
 
 # Connect to MySQL in Docker environment
 mysql-connect:
 	@echo "Connecting to MySQL in Docker environment..."
-	docker-compose exec mysql mysql -u testuser -ptestpassword testdb
+	docker compose exec mysql mysql -u testuser -ptestpassword testdb
 
 # Install development tools
 install-tools:

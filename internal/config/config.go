@@ -12,6 +12,7 @@ import (
 
 type CommonConfig struct {
 	PtOsc               PtOscConfig           `yaml:"pt_osc"`
+	PtArchiver          PtArchiverConfig      `yaml:"pt_archiver"`
 	Alert               AlertConfig           `yaml:"alert"`
 	PtOscThreshold      int64                 `yaml:"pt_osc_threshold"`
 	SessionConfig       SessionConfig         `yaml:"session_config"`
@@ -30,6 +31,19 @@ type PtOscConfig struct {
 	NoDropTriggers  bool    `yaml:"no_drop_triggers"`
 	NoDropNewTable  bool    `yaml:"no_drop_new_table"`
 	NoDropOldTable  bool    `yaml:"no_drop_old_table"`
+}
+
+type PtArchiverConfig struct {
+	Limit          int     `yaml:"limit"`
+	CommitEach     bool    `yaml:"commit_each"`
+	Progress       int     `yaml:"progress"`
+	MaxLag         float64 `yaml:"max_lag"`
+	NoCheckCharset bool    `yaml:"no_check_charset"`
+	BulkDelete     bool    `yaml:"bulk_delete"`
+	PrimaryKeyOnly bool    `yaml:"primary_key_only"`
+	Statistics     bool    `yaml:"statistics"`
+	Where          string  `yaml:"where"`
+	Enabled        bool    `yaml:"enabled"`
 }
 
 type AlertConfig struct {

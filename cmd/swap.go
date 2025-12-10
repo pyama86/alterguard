@@ -5,6 +5,7 @@ import (
 
 	"github.com/pyama86/alterguard/internal/config"
 	"github.com/pyama86/alterguard/internal/database"
+	"github.com/pyama86/alterguard/internal/ptarchiver"
 	"github.com/pyama86/alterguard/internal/ptosc"
 	"github.com/pyama86/alterguard/internal/slack"
 	"github.com/pyama86/alterguard/internal/task"
@@ -58,6 +59,9 @@ func swapTable(tableName string) error {
 	// Initialize pt-osc executor (not used for swap but required for manager)
 	ptoscExecutor := ptosc.NewPtOscExecutor(logger)
 
+	// Initialize pt-archiver executor (not used for swap but required for manager)
+	ptarchiverExecutor := ptarchiver.NewPtArchiverExecutor(logger)
+
 	// Initialize Slack notifier
 	slackNotifier, err := slack.NewSlackNotifierWithEnvironment(logger, cfg.Environment)
 	if err != nil {
@@ -68,7 +72,7 @@ func swapTable(tableName string) error {
 	logger.Info("Slack notifier initialized")
 
 	// Initialize task manager
-	taskManager := task.NewManager(dbClient, ptoscExecutor, slackNotifier, logger, cfg, dryRun)
+	taskManager := task.NewManager(dbClient, ptoscExecutor, ptarchiverExecutor, slackNotifier, logger, cfg, dryRun)
 
 	// Execute table swap
 	logger.Infof("Starting table swap for %s", tableName)
