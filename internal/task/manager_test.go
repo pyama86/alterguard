@@ -80,6 +80,11 @@ func (m *MockDBClient) AnalyzeTable(tableName string) error {
 	return args.Error(0)
 }
 
+func (m *MockDBClient) GetTableBufferPoolSizeMB(schemaName, tableName string) (float64, error) {
+	args := m.Called(schemaName, tableName)
+	return args.Get(0).(float64), args.Error(1)
+}
+
 func (m *MockDBClient) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -741,9 +746,14 @@ func TestSwapTable(t *testing.T) {
 
 func TestCleanupTable(t *testing.T) {
 	tests := []struct {
-		name      string
-		tableName string
-		dryRun    bool
+		name                        string
+		tableName                   string
+		dryRun                      bool
+		bufferPoolThresholdMB       float64
+		bufferPoolSizeMB            float64
+		bufferPoolError             error
+		expectBufferPoolCheck       bool
+		expectBufferPoolCheckFailed bool
 	}{
 		{
 			name:      "normal cleanup",
@@ -754,6 +764,31 @@ func TestCleanupTable(t *testing.T) {
 			name:      "dry run cleanup",
 			tableName: "test_table",
 			dryRun:    true,
+		},
+		{
+			name:                  "cleanup with buffer pool check - below threshold",
+			tableName:             "test_table",
+			dryRun:                false,
+			bufferPoolThresholdMB: 200.0,
+			bufferPoolSizeMB:      100.0,
+			expectBufferPoolCheck: true,
+		},
+		{
+			name:                        "cleanup with buffer pool check - above threshold",
+			tableName:                   "test_table",
+			dryRun:                      false,
+			bufferPoolThresholdMB:       100.0,
+			bufferPoolSizeMB:            200.0,
+			expectBufferPoolCheck:       true,
+			expectBufferPoolCheckFailed: true,
+		},
+		{
+			name:                  "cleanup with buffer pool check - error retrieving size",
+			tableName:             "test_table",
+			dryRun:                false,
+			bufferPoolThresholdMB: 100.0,
+			bufferPoolError:       errors.New("buffer pool query failed"),
+			expectBufferPoolCheck: true,
 		},
 	}
 
@@ -767,7 +802,12 @@ func TestCleanupTable(t *testing.T) {
 			mockPtArchiver := &MockPtArchiverExecutor{}
 			mockSlack := &MockSlackNotifier{}
 
-			cfg := &config.Config{}
+			cfg := &config.Config{
+				DSN: "user:password@tcp(localhost:3306)/testdb?charset=utf8mb4",
+				Common: config.CommonConfig{
+					BufferPoolSizeThresholdMB: tt.bufferPoolThresholdMB,
+				},
+			}
 			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, tt.dryRun)
 
 			expectedSQL := "DROP TABLE IF EXISTS test_table_old"
@@ -777,16 +817,28 @@ func TestCleanupTable(t *testing.T) {
 				taskName = "cleanup (DRY RUN)"
 			}
 
-			mockSlack.On("NotifyStartWithQuery", taskName, tt.tableName, expectedQuery, int64(0)).Return(nil)
-			mockSlack.On("NotifySuccessWithQuery", taskName, tt.tableName, expectedQuery, int64(0), mock.Anything).Return(nil)
+			if tt.expectBufferPoolCheck {
+				mockDB.On("GetTableBufferPoolSizeMB", "testdb", "test_table_old").Return(tt.bufferPoolSizeMB, tt.bufferPoolError)
+			}
 
-			if !tt.dryRun {
-				mockDB.On("ExecuteAlter", expectedSQL).Return(nil)
+			if !tt.expectBufferPoolCheckFailed {
+				mockSlack.On("NotifyStartWithQuery", taskName, tt.tableName, expectedQuery, int64(0)).Return(nil)
+				mockSlack.On("NotifySuccessWithQuery", taskName, tt.tableName, expectedQuery, int64(0), mock.Anything).Return(nil)
+
+				if !tt.dryRun {
+					mockDB.On("ExecuteAlter", expectedSQL).Return(nil)
+				}
 			}
 
 			err := manager.CleanupOldTable(tt.tableName)
 
-			require.NoError(t, err)
+			if tt.expectBufferPoolCheckFailed {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "buffer pool size check failed")
+			} else {
+				require.NoError(t, err)
+			}
+
 			mockDB.AssertExpectations(t)
 			mockSlack.AssertExpectations(t)
 		})

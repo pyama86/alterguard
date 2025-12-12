@@ -15,3 +15,7 @@ alert:
 session_config:
   lock_wait_timeout: 10
   innodb_lock_wait_timeout: 10
+
+# Buffer pool size check threshold (optional, disabled if 0 or not set)
+# Drop old table only if buffer pool size is below this threshold (in MB)
+# buffer_pool_size_threshold_mb: 100.0

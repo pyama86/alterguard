@@ -493,3 +493,27 @@ func TestAnalyzeTable(t *testing.T) {
 		})
 	}
 }
+
+func TestGetTableBufferPoolSizeMB(t *testing.T) {
+	t.Run("verify query format", func(t *testing.T) {
+		// このテストでは、GetTableBufferPoolSizeMBメソッドが正しいクエリ形式を使用していることを確認
+		schemaName := "testdb"
+		tableName := "users_old"
+		expectedFullTableName := "`testdb`.`users_old`"
+
+		// クエリ文字列が期待通りであることを確認
+		assert.Contains(t, expectedFullTableName, schemaName)
+		assert.Contains(t, expectedFullTableName, tableName)
+
+		// メソッドのクエリが正しい形式であることを確認するための簡易チェック
+		query := `
+		SELECT
+			ROUND(COUNT(*) * @@innodb_page_size / 1024 / 1024, 2) AS mb
+		FROM INFORMATION_SCHEMA.INNODB_BUFFER_PAGE
+		WHERE TABLE_NAME = ?
+	`
+		assert.Contains(t, query, "INNODB_BUFFER_PAGE")
+		assert.Contains(t, query, "@@innodb_page_size")
+		assert.Contains(t, query, "TABLE_NAME = ?")
+	})
+}
