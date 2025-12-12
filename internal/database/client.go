@@ -24,6 +24,7 @@ type Client interface {
 	HasOtherActiveConnections() (bool, string, error)
 	GetCurrentUser() (string, error)
 	AnalyzeTable(tableName string) error
+	GetTableBufferPoolSizeMB(schemaName, tableName string) (float64, error)
 	Close() error
 }
 
@@ -283,6 +284,29 @@ func (c *MySQLClient) AnalyzeTable(tableName string) error {
 
 	c.logger.Infof("ANALYZE TABLE completed (duration: %v): %s", duration, analyzeSQL)
 	return nil
+}
+
+func (c *MySQLClient) GetTableBufferPoolSizeMB(schemaName, tableName string) (float64, error) {
+	var sizeMB float64
+
+	fullTableName := fmt.Sprintf("`%s`.`%s`", schemaName, tableName)
+
+	query := `
+		SELECT
+			ROUND(COUNT(*) * @@innodb_page_size / 1024 / 1024, 2) AS mb
+		FROM INFORMATION_SCHEMA.INNODB_BUFFER_PAGE
+		WHERE TABLE_NAME = ?
+	`
+
+	c.logger.Debugf("Getting buffer pool size for table %s", fullTableName)
+
+	err := c.db.Get(&sizeMB, query, fullTableName)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get buffer pool size for %s: %w", fullTableName, err)
+	}
+
+	c.logger.Infof("Buffer pool size for table %s: %.2f MB", fullTableName, sizeMB)
+	return sizeMB, nil
 }
 
 func (c *MySQLClient) Close() error {

@@ -9,6 +9,7 @@ alterguard is a tool for safely and efficiently executing MySQL schema changes. 
 ### Key Features
 
 - **Automatic Method Selection**: Chooses ALTER TABLE or pt-online-schema-change based on row count thresholds
+- **Buffer Pool Size Check**: Prevents dropping tables that are heavily cached in memory
 - **Slack Notifications**: Sends execution status notifications to Slack
 - **Kubernetes Ready**: Optimized for Kubernetes Job execution
 - **Dry Run Mode**: Safe test execution
@@ -69,6 +70,10 @@ session_config:
 
 # Disable ANALYZE TABLE execution before table swap (default: false, enabled)
 disable_analyze_table: false
+
+# Buffer pool size check threshold (optional, disabled if 0 or not set)
+# Drop old table only if buffer pool size is below this threshold (in MB)
+buffer_pool_size_threshold_mb: 100.0
 ```
 
 #### Task Definition (`tasks.yaml`)
@@ -113,10 +118,11 @@ disable_analyze_table: false
 
 #### Global Settings
 
-| Option                  | Type  | Default | Description                                                    |
-| ----------------------- | ----- | ------- | -------------------------------------------------------------- |
-| `pt_osc_threshold`      | int64 | -       | Row count threshold for using pt-osc                           |
-| `disable_analyze_table` | bool  | false   | Disable ANALYZE TABLE execution before table swap (default: enabled) |
+| Option                         | Type    | Default | Description                                                                              |
+| ------------------------------ | ------- | ------- | ---------------------------------------------------------------------------------------- |
+| `pt_osc_threshold`             | int64   | -       | Row count threshold for using pt-osc                                                     |
+| `disable_analyze_table`        | bool    | false   | Disable ANALYZE TABLE execution before table swap (default: enabled)                     |
+| `buffer_pool_size_threshold_mb`| float64 | 0       | Buffer pool size threshold in MB for cleanup operations (0 = disabled, no size check) |
 
 #### Alert Section
 
@@ -189,6 +195,17 @@ Cleans up resources created by pt-online-schema-change.
 - `--drop-triggers`: Drop triggers created by pt-osc (`pt_osc_table_name_*`)
 
 At least one cleanup operation must be specified.
+
+**Buffer Pool Size Check:**
+
+When `buffer_pool_size_threshold_mb` is configured, the cleanup operation with `--drop-table` performs a safety check before dropping the old table:
+
+1. Queries `INFORMATION_SCHEMA.INNODB_BUFFER_PAGE` to calculate the table's buffer pool size
+2. Compares the size against the configured threshold
+3. Only drops the table if the buffer pool size is below the threshold
+4. Returns an error if the size exceeds the threshold, preventing potential performance impact
+
+This feature helps prevent dropping tables that are still heavily cached in memory, which could cause performance degradation when the table data needs to be reloaded into the buffer pool.
 
 ### Using Standard Input
 
@@ -287,6 +304,8 @@ data:
       lock_wait_timeout: 10
       innodb_lock_wait_timeout: 10
 
+    buffer_pool_size_threshold_mb: 100.0
+
   tasks.yaml: |
     - "ALTER TABLE users ADD COLUMN status VARCHAR(20) DEFAULT 'active'"
     - "ALTER TABLE orders DROP INDEX ix_legacy_status"
@@ -375,3 +394,4 @@ Pull requests and issue reports are welcome.
 - When using `--stdin`, queries must be terminated with semicolons
 - The `pt_osc_threshold` setting determines when to use pt-online-schema-change vs direct ALTER TABLE
 - Session timeout settings help prevent long-running locks during schema changes
+- The `buffer_pool_size_threshold_mb` setting helps prevent performance degradation by checking buffer pool usage before dropping tables. Set this value based on your system's buffer pool size and acceptable cache eviction impact

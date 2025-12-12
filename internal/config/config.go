@@ -11,13 +11,14 @@ import (
 )
 
 type CommonConfig struct {
-	PtOsc               PtOscConfig           `yaml:"pt_osc"`
-	PtArchiver          PtArchiverConfig      `yaml:"pt_archiver"`
-	Alert               AlertConfig           `yaml:"alert"`
-	PtOscThreshold      int64                 `yaml:"pt_osc_threshold"`
-	SessionConfig       SessionConfig         `yaml:"session_config"`
-	ConnectionCheck     ConnectionCheckConfig `yaml:"connection_check"`
-	DisableAnalyzeTable bool                  `yaml:"disable_analyze_table"`
+	PtOsc                     PtOscConfig           `yaml:"pt_osc"`
+	PtArchiver                PtArchiverConfig      `yaml:"pt_archiver"`
+	Alert                     AlertConfig           `yaml:"alert"`
+	PtOscThreshold            int64                 `yaml:"pt_osc_threshold"`
+	SessionConfig             SessionConfig         `yaml:"session_config"`
+	ConnectionCheck           ConnectionCheckConfig `yaml:"connection_check"`
+	DisableAnalyzeTable       bool                  `yaml:"disable_analyze_table"`
+	BufferPoolSizeThresholdMB float64               `yaml:"buffer_pool_size_threshold_mb"`
 }
 
 type PtOscConfig struct {

@@ -585,6 +585,31 @@ func (m *Manager) CleanupOldTable(tableName string) error {
 		}
 	}
 
+	// バッファプールサイズチェック（閾値が設定されている場合）
+	if m.config.Common.BufferPoolSizeThresholdMB > 0 {
+		dbName, err := m.extractDatabaseNameFromDSN()
+		if err != nil {
+			return fmt.Errorf("failed to extract database name from DSN: %w", err)
+		}
+
+		oldTableName := fmt.Sprintf("%s_old", tableName)
+		bufferPoolSizeMB, err := m.db.GetTableBufferPoolSizeMB(dbName, oldTableName)
+		if err != nil {
+			m.logger.Warnf("Failed to get buffer pool size for table %s: %v", oldTableName, err)
+		} else {
+			m.logger.Infof("Buffer pool size for table %s: %.2f MB (threshold: %.2f MB)",
+				oldTableName, bufferPoolSizeMB, m.config.Common.BufferPoolSizeThresholdMB)
+
+			if bufferPoolSizeMB > m.config.Common.BufferPoolSizeThresholdMB {
+				errMsg := fmt.Sprintf(
+					"buffer pool size (%.2f MB) exceeds threshold (%.2f MB) for table %s",
+					bufferPoolSizeMB, m.config.Common.BufferPoolSizeThresholdMB, oldTableName)
+				m.logger.Errorf("Buffer pool size check failed: %s", errMsg)
+				return fmt.Errorf("buffer pool size check failed: %s", errMsg)
+			}
+		}
+	}
+
 	dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s_old", tableName)
 	cleanedQuery := strings.ReplaceAll(dropSQL, "`", "")
 	quotedQuery := fmt.Sprintf("`%s`", cleanedQuery)
