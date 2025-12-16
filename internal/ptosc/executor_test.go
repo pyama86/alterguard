@@ -166,6 +166,41 @@ func TestBuildArgsWithPassword(t *testing.T) {
 			},
 			expectedPassword: "pass",
 		},
+		{
+			name:           "no-check-unique-key-change enabled",
+			tableName:      "users",
+			alterStatement: "ADD UNIQUE INDEX idx_email (email)",
+			ptOscConfig: config.PtOscConfig{
+				NoCheckUniqueKeyChange: true,
+			},
+			dsn:         "user:pass@tcp(localhost:3306)/testdb",
+			forceDryRun: false,
+			expectedArgs: []string{
+				"--alter=ADD UNIQUE INDEX idx_email (email)",
+				"--ask-pass",
+				"--no-check-unique-key-change",
+				"--execute",
+				"h=localhost,P=3306,D=testdb,t=users,u=user",
+			},
+			expectedPassword: "pass",
+		},
+		{
+			name:           "no-check-unique-key-change disabled (default behavior)",
+			tableName:      "users",
+			alterStatement: "ADD UNIQUE INDEX idx_email (email)",
+			ptOscConfig: config.PtOscConfig{
+				NoCheckUniqueKeyChange: false,
+			},
+			dsn:         "user:pass@tcp(localhost:3306)/testdb",
+			forceDryRun: false,
+			expectedArgs: []string{
+				"--alter=ADD UNIQUE INDEX idx_email (email)",
+				"--ask-pass",
+				"--execute",
+				"h=localhost,P=3306,D=testdb,t=users,u=user",
+			},
+			expectedPassword: "pass",
+		},
 	}
 
 	for _, tt := range tests {

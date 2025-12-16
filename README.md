@@ -58,6 +58,7 @@ pt_osc:
   no_drop_triggers: false
   no_drop_new_table: false
   no_drop_old_table: false
+  no_check_unique_key_change: false
 
 pt_osc_threshold: 1000000
 
@@ -103,18 +104,19 @@ buffer_pool_size_threshold_mb: 100.0
 
 #### pt_osc Section
 
-| Option              | Type    | Default | Description                                 |
-| ------------------- | ------- | ------- | ------------------------------------------- |
-| `charset`           | string  | utf8mb4 | Character set for pt-online-schema-change   |
-| `recursion_method`  | string  | -       | Replication lag detection method            |
-| `no_swap_tables`    | bool    | true    | Skip table swapping (manual swap required)  |
-| `chunk_size`        | int     | 1000    | Number of rows to process per chunk         |
-| `max_lag`           | float64 | 1.5     | Maximum replication lag threshold (seconds) |
-| `statistics`        | bool    | true    | Enable statistics collection                |
-| `dry_run`           | bool    | false   | Run in dry-run mode                         |
-| `no_drop_triggers`  | bool    | false   | Do not drop triggers after completion       |
-| `no_drop_new_table` | bool    | false   | Do not drop new table on failure            |
-| `no_drop_old_table` | bool    | false   | Do not drop old table after swap            |
+| Option                      | Type    | Default | Description                                                                        |
+| --------------------------- | ------- | ------- | ---------------------------------------------------------------------------------- |
+| `charset`                   | string  | utf8mb4 | Character set for pt-online-schema-change                                          |
+| `recursion_method`          | string  | -       | Replication lag detection method                                                   |
+| `no_swap_tables`            | bool    | true    | Skip table swapping (manual swap required)                                         |
+| `chunk_size`                | int     | 1000    | Number of rows to process per chunk                                                |
+| `max_lag`                   | float64 | 1.5     | Maximum replication lag threshold (seconds)                                        |
+| `statistics`                | bool    | true    | Enable statistics collection                                                       |
+| `dry_run`                   | bool    | false   | Run in dry-run mode                                                                |
+| `no_drop_triggers`          | bool    | false   | Do not drop triggers after completion                                              |
+| `no_drop_new_table`         | bool    | false   | Do not drop new table on failure                                                   |
+| `no_drop_old_table`         | bool    | false   | Do not drop old table after swap                                                   |
+| `no_check_unique_key_change`| bool    | false   | Disable unique key change check. When true, pt-osc can run even if the ALTER adds a unique index (bypasses pt-osc default safety check) |
 
 #### Global Settings
 
@@ -294,6 +296,7 @@ data:
       max_lag: 1.5
       statistics: true
       dry_run: false
+      no_check_unique_key_change: false
 
     pt_osc_threshold: 1000000
 

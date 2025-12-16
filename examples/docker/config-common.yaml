@@ -6,6 +6,7 @@ pt_osc:
   statistics: true
   no_drop_new_table: true
   no_drop_triggers: true
+  no_check_unique_key_change: true
 
 pt_archiver:
   enabled: true
