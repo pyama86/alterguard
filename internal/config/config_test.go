@@ -180,3 +180,55 @@ disable_analyze_table: false
 		})
 	}
 }
+
+func TestNoCheckUniqueKeyChange(t *testing.T) {
+	tests := []struct {
+		name      string
+		yamlData  string
+		wantValue bool
+	}{
+		{
+			name: "no_check_unique_key_change not specified - defaults to false",
+			yamlData: `
+pt_osc:
+  charset: utf8mb4
+pt_osc_threshold: 1000
+`,
+			wantValue: false,
+		},
+		{
+			name: "no_check_unique_key_change explicitly set to true",
+			yamlData: `
+pt_osc:
+  charset: utf8mb4
+  no_check_unique_key_change: true
+pt_osc_threshold: 1000
+`,
+			wantValue: true,
+		},
+		{
+			name: "no_check_unique_key_change explicitly set to false",
+			yamlData: `
+pt_osc:
+  charset: utf8mb4
+  no_check_unique_key_change: false
+pt_osc_threshold: 1000
+`,
+			wantValue: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &CommonConfig{}
+			err := yaml.Unmarshal([]byte(tt.yamlData), config)
+			if err != nil {
+				t.Fatalf("Failed to unmarshal YAML: %v", err)
+			}
+
+			if config.PtOsc.NoCheckUniqueKeyChange != tt.wantValue {
+				t.Errorf("NoCheckUniqueKeyChange = %v, want %v", config.PtOsc.NoCheckUniqueKeyChange, tt.wantValue)
+			}
+		})
+	}
+}

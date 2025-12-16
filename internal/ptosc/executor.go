@@ -284,6 +284,10 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 		args = append(args, "--no-drop-old-table")
 	}
 
+	if ptOscConfig.NoCheckUniqueKeyChange {
+		args = append(args, "--no-check-unique-key-change")
+	}
+
 	if forceDryRun || ptOscConfig.DryRun {
 		args = append(args, "--dry-run")
 	} else {

@@ -6,6 +6,7 @@ pt_osc:
   max_lag: 1.5
   statistics: true
   dry_run: false
+  # no_check_unique_key_change: false  # Disable unique key change check (default: false)
 
 pt_osc_threshold: 1000
 
