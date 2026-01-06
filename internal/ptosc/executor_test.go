@@ -201,6 +201,41 @@ func TestBuildArgsWithPassword(t *testing.T) {
 			},
 			expectedPassword: "pass",
 		},
+		{
+			name:           "no-check-alter enabled",
+			tableName:      "users",
+			alterStatement: "CHANGE COLUMN old_name new_name VARCHAR(255)",
+			ptOscConfig: config.PtOscConfig{
+				NoCheckAlter: true,
+			},
+			dsn:         "user:pass@tcp(localhost:3306)/testdb",
+			forceDryRun: false,
+			expectedArgs: []string{
+				"--alter=CHANGE COLUMN old_name new_name VARCHAR(255)",
+				"--ask-pass",
+				"--no-check-alter",
+				"--execute",
+				"h=localhost,P=3306,D=testdb,t=users,u=user",
+			},
+			expectedPassword: "pass",
+		},
+		{
+			name:           "no-check-alter disabled (default behavior)",
+			tableName:      "users",
+			alterStatement: "CHANGE COLUMN old_name new_name VARCHAR(255)",
+			ptOscConfig: config.PtOscConfig{
+				NoCheckAlter: false,
+			},
+			dsn:         "user:pass@tcp(localhost:3306)/testdb",
+			forceDryRun: false,
+			expectedArgs: []string{
+				"--alter=CHANGE COLUMN old_name new_name VARCHAR(255)",
+				"--ask-pass",
+				"--execute",
+				"h=localhost,P=3306,D=testdb,t=users,u=user",
+			},
+			expectedPassword: "pass",
+		},
 	}
 
 	for _, tt := range tests {
