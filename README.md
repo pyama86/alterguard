@@ -59,6 +59,7 @@ pt_osc:
   no_drop_new_table: false
   no_drop_old_table: false
   no_check_unique_key_change: false
+  no_check_alter: false
 
 pt_osc_threshold: 1000000
 
@@ -117,6 +118,7 @@ buffer_pool_size_threshold_mb: 100.0
 | `no_drop_new_table`         | bool    | false   | Do not drop new table on failure                                                   |
 | `no_drop_old_table`         | bool    | false   | Do not drop old table after swap                                                   |
 | `no_check_unique_key_change`| bool    | false   | Disable unique key change check. When true, pt-osc can run even if the ALTER adds a unique index (bypasses pt-osc default safety check) |
+| `no_check_alter`            | bool    | false   | Disable ALTER statement validation. When true, pt-osc can run even if the ALTER contains potentially unsafe operations like column renames (bypasses pt-osc default safety check) |
 
 #### Global Settings
 
@@ -297,6 +299,7 @@ data:
       statistics: true
       dry_run: false
       no_check_unique_key_change: false
+      no_check_alter: false
 
     pt_osc_threshold: 1000000
 

@@ -288,6 +288,10 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 		args = append(args, "--no-check-unique-key-change")
 	}
 
+	if ptOscConfig.NoCheckAlter {
+		args = append(args, "--no-check-alter")
+	}
+
 	if forceDryRun || ptOscConfig.DryRun {
 		args = append(args, "--dry-run")
 	} else {

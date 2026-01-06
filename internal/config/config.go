@@ -33,6 +33,7 @@ type PtOscConfig struct {
 	NoDropNewTable         bool    `yaml:"no_drop_new_table"`
 	NoDropOldTable         bool    `yaml:"no_drop_old_table"`
 	NoCheckUniqueKeyChange bool    `yaml:"no_check_unique_key_change"`
+	NoCheckAlter           bool    `yaml:"no_check_alter"`
 }
 
 type PtArchiverConfig struct {
