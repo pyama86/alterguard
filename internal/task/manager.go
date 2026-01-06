@@ -87,9 +87,9 @@ func (m *Manager) ExecuteAllTasks() error {
 
 	tableGroups := m.groupQueriesByTable(queries)
 
-	for tableName, group := range tableGroups {
-		if err := m.executeTableGroup(tableName, group); err != nil {
-			return fmt.Errorf("failed to execute queries for table %s: %w", tableName, err)
+	for _, group := range tableGroups {
+		if err := m.executeTableGroup(group.TableName, group); err != nil {
+			return fmt.Errorf("failed to execute queries for table %s: %w", group.TableName, err)
 		}
 	}
 
@@ -125,33 +125,45 @@ func (m *Manager) ExecuteAllTasks() error {
 	return nil
 }
 
-func (m *Manager) groupQueriesByTable(queries []QueryInfo) map[string]*TableGroup {
-	groups := make(map[string]*TableGroup)
+func (m *Manager) groupQueriesByTable(queries []QueryInfo) []*TableGroup {
+	groupMap := make(map[string]*TableGroup)
 
 	for _, query := range queries {
 		if query.TableName == "" {
 			continue
 		}
 
-		if _, exists := groups[query.TableName]; !exists {
-			groups[query.TableName] = &TableGroup{
+		group, exists := groupMap[query.TableName]
+		if !exists {
+			group = &TableGroup{
 				TableName:    query.TableName,
 				AlterParts:   []string{},
 				OtherQueries: []QueryInfo{},
 			}
+			groupMap[query.TableName] = group
 		}
 
 		if query.QueryType == "ALTER" {
 			alterPart := m.extractAlterStatement(query.Query)
 			if alterPart != "" {
-				groups[query.TableName].AlterParts = append(groups[query.TableName].AlterParts, alterPart)
+				group.AlterParts = append(group.AlterParts, alterPart)
 			}
 		} else {
-			groups[query.TableName].OtherQueries = append(groups[query.TableName].OtherQueries, query)
+			group.OtherQueries = append(group.OtherQueries, query)
 		}
 	}
 
-	return groups
+	seen := make(map[string]bool)
+	var result []*TableGroup
+	for _, query := range queries {
+		if query.TableName == "" || seen[query.TableName] {
+			continue
+		}
+		seen[query.TableName] = true
+		result = append(result, groupMap[query.TableName])
+	}
+
+	return result
 }
 
 func (m *Manager) executeTableGroup(tableName string, group *TableGroup) error {

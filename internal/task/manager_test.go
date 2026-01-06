@@ -1210,3 +1210,57 @@ func TestExtractDatabaseNameFromDSN(t *testing.T) {
 		})
 	}
 }
+
+func TestExecuteAllTasks_PreservesInputOrder(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	mockDB := &MockDBClient{}
+	mockPtOsc := &MockPtOscExecutor{}
+	mockSlack := &MockSlackNotifier{}
+
+	queries := []string{
+		"ALTER TABLE users_legacy RENAME TO users",
+		"ALTER TABLE users RENAME INDEX idx_users_legacy_email TO idx_users_email",
+		"ALTER TABLE orders ADD COLUMN total INT",
+	}
+
+	var executionOrder []string
+
+	for _, tableName := range []string{"users_legacy", "users", "orders"} {
+		mockDB.On("GetTableRowCount", tableName).Return(int64(100), nil)
+	}
+
+	mockDB.On("ExecuteAlter", mock.Anything).Run(func(args mock.Arguments) {
+		query := args.String(0)
+		parts := strings.Fields(query)
+		if len(parts) >= 3 {
+			executionOrder = append(executionOrder, parts[2])
+		}
+	}).Return(nil)
+
+	mockSlack.On("NotifyStartWithQuery", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockSlack.On("NotifySuccessWithQuery", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	cfg := &config.Config{
+		Queries: queries,
+		Common: config.CommonConfig{
+			PtOsc:          config.PtOscConfig{},
+			PtOscThreshold: 1000,
+			ConnectionCheck: config.ConnectionCheckConfig{
+				Enabled: false,
+			},
+		},
+		DSN: "test-dsn",
+	}
+
+	mockPtArchiver := &MockPtArchiverExecutor{}
+	manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, false)
+	err := manager.ExecuteAllTasks()
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"users_legacy", "users", "orders"}, executionOrder, "Execution order should match input order")
+
+	mockDB.AssertExpectations(t)
+	mockSlack.AssertExpectations(t)
+}
