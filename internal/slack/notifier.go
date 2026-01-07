@@ -26,6 +26,9 @@ type Notifier interface {
 	NotifyTriggerCleanupSuccess(taskName, tableName string, triggers []string, duration time.Duration) error
 	NotifyTriggerCleanupFailure(taskName, tableName string, triggers []string, err error) error
 	NotifyPtOscPreCheckFailure(taskName, tableName string) error
+	NotifyAllTasksStart(totalQueries int) error
+	NotifyAllTasksSuccess(totalQueries int, duration time.Duration) error
+	NotifyAllTasksFailure(totalQueries int, err error) error
 }
 
 type DryRunResult struct {
@@ -228,6 +231,27 @@ func (n *SlackNotifier) NotifyPtOscPreCheckFailure(taskName, tableName string) e
 		title, taskName, tableName, tableName, tableName)
 
 	return n.sendMessage(message, "warning")
+}
+
+func (n *SlackNotifier) NotifyAllTasksStart(totalQueries int) error {
+	title := n.formatTitle("🚀 All tasks started")
+	message := fmt.Sprintf("%s\nTotal queries: %d", title, totalQueries)
+
+	return n.sendMessage(message, "good")
+}
+
+func (n *SlackNotifier) NotifyAllTasksSuccess(totalQueries int, duration time.Duration) error {
+	title := n.formatTitle("✅ All tasks completed successfully")
+	message := fmt.Sprintf("%s\nTotal queries: %d\nTotal duration: %s", title, totalQueries, duration.String())
+
+	return n.sendMessage(message, "good")
+}
+
+func (n *SlackNotifier) NotifyAllTasksFailure(totalQueries int, err error) error {
+	title := n.formatTitle("❌ Tasks failed")
+	message := fmt.Sprintf("%s\nTotal queries: %d\nError: %s", title, totalQueries, err.Error())
+
+	return n.sendMessage(message, "danger")
 }
 
 func (n *SlackNotifier) sendMessage(text, color string) error {

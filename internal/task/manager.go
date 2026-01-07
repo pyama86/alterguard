@@ -38,13 +38,6 @@ type QueryInfo struct {
 	TableName string
 }
 
-type TableGroup struct {
-	TableName    string
-	AlterParts   []string
-	OtherQueries []QueryInfo
-	RowCount     int64
-}
-
 func NewManager(db database.Client, ptoscExec ptosc.Executor, ptarchiverExec ptarchiver.Executor, slackNotifier slack.Notifier, logger *logrus.Logger, cfg *config.Config, dryRun bool) *Manager {
 	return &Manager{
 		db:         db,
@@ -85,199 +78,154 @@ func (m *Manager) ExecuteAllTasks() error {
 		return fmt.Errorf("failed to parse queries: %w", err)
 	}
 
-	tableGroups := m.groupQueriesByTable(queries)
+	// 全体の開始を通知
+	if err := m.slack.NotifyAllTasksStart(len(queries)); err != nil {
+		m.logger.Errorf("Failed to send all tasks start notification: %v", err)
+	}
 
-	for tableName, group := range tableGroups {
-		if err := m.executeTableGroup(tableName, group); err != nil {
-			return fmt.Errorf("failed to execute queries for table %s: %w", tableName, err)
+	start := time.Now()
+
+	// 受け取った順番通りに1つずつ実行
+	for _, query := range queries {
+		if err := m.executeSingleQuery(&query); err != nil {
+			// 失敗時の通知
+			if slackErr := m.slack.NotifyAllTasksFailure(len(queries), err); slackErr != nil {
+				m.logger.Errorf("Failed to send all tasks failure notification: %v", slackErr)
+			}
+			return fmt.Errorf("failed to execute query: %w", err)
 		}
 	}
 
-	// テーブル指定がないクエリを実行する
-	for _, query := range queries {
-		if query.TableName == "" {
-			cleanedQuery := strings.ReplaceAll(query.Query, "`", "")
-			quotedQuery := fmt.Sprintf("`%s`", cleanedQuery)
-			taskName := "non-table-query"
-			if m.dryRun {
-				taskName = "non-table-query (DRY RUN)"
-			}
-			if err := m.slack.NotifyStartWithQuery(taskName, query.TableName, quotedQuery, 0); err != nil {
-				m.logger.Errorf("Failed to send start notification: %v", err)
-			}
+	duration := time.Since(start)
 
-			start := time.Now()
-			if err := m.executeQuery(&query, "non-table-query"); err != nil {
-				if slackErr := m.slack.NotifyFailureWithQuery(taskName, query.TableName, quotedQuery, 0, err); slackErr != nil {
-					m.logger.Errorf("Failed to send failure notification: %v", slackErr)
-				}
-				return fmt.Errorf("failed to execute query: %w", err)
-			}
-
-			duration := time.Since(start)
-			if err := m.slack.NotifySuccessWithQuery(taskName, query.TableName, quotedQuery, 0, duration); err != nil {
-				m.logger.Errorf("Failed to send success notification: %v", err)
-			}
-		}
+	// 全体の完了を通知
+	if err := m.slack.NotifyAllTasksSuccess(len(queries), duration); err != nil {
+		m.logger.Errorf("Failed to send all tasks success notification: %v", err)
 	}
 
 	m.logger.Info("All queries completed successfully")
 	return nil
 }
 
-func (m *Manager) groupQueriesByTable(queries []QueryInfo) map[string]*TableGroup {
-	groups := make(map[string]*TableGroup)
+func (m *Manager) executeSingleQuery(query *QueryInfo) error {
+	m.logger.Infof("Executing query: %s", query.Query)
 
-	for _, query := range queries {
-		if query.TableName == "" {
-			continue
-		}
-
-		if _, exists := groups[query.TableName]; !exists {
-			groups[query.TableName] = &TableGroup{
-				TableName:    query.TableName,
-				AlterParts:   []string{},
-				OtherQueries: []QueryInfo{},
-			}
-		}
-
-		if query.QueryType == "ALTER" {
-			alterPart := m.extractAlterStatement(query.Query)
-			if alterPart != "" {
-				groups[query.TableName].AlterParts = append(groups[query.TableName].AlterParts, alterPart)
-			}
-		} else {
-			groups[query.TableName].OtherQueries = append(groups[query.TableName].OtherQueries, query)
-		}
+	// ALTER TABLE文の場合は、テーブルサイズに応じてALTER TABLEかpt-oscを選択
+	if query.QueryType == "ALTER" && query.TableName != "" {
+		return m.executeAlterQuery(query)
 	}
 
-	return groups
+	// それ以外はそのまま実行
+	return m.executeSmallQuery(query)
 }
 
-func (m *Manager) executeTableGroup(tableName string, group *TableGroup) error {
-	m.logger.Infof("Processing table: %s", tableName)
-
-	if err := m.executeSmallQueries(group.OtherQueries); err != nil {
-		return err
-	}
-
-	if len(group.AlterParts) == 0 {
-		return nil
-	}
-
-	rowCount, err := m.db.GetTableRowCount(tableName)
+func (m *Manager) executeAlterQuery(query *QueryInfo) error {
+	// 行数取得
+	rowCount, err := m.db.GetTableRowCount(query.TableName)
 	if err != nil {
-		m.logger.Warnf("Failed to get row count for table %s, treating as small query: %v", tableName, err)
-		return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts)
+		m.logger.Warnf("Failed to get row count for table %s, treating as small query: %v", query.TableName, err)
+		return m.executeSmallQuery(query)
 	}
 
 	threshold := m.config.Common.PtOscThreshold
-	m.logger.Infof("Table %s has %d rows (threshold: %d)", tableName, rowCount, threshold)
+	m.logger.Infof("Table %s has %d rows (threshold: %d)", query.TableName, rowCount, threshold)
 
+	// 閾値以下の場合はALTER TABLE
 	if rowCount <= threshold {
-		return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts)
-	} else {
-		return m.executeLargeAlterQuery(tableName, group.AlterParts, rowCount)
+		return m.executeAlterTableDirect(query, rowCount)
 	}
+
+	// 閾値を超える場合はpt-osc
+	return m.executeAlterTableWithPtOsc(query, rowCount)
 }
 
-func (m *Manager) executeAlterPartsAsSmallQueries(tableName string, alterParts []string) error {
+func (m *Manager) executeAlterTableDirect(query *QueryInfo, rowCount int64) error {
 	taskName := "alter-table"
 	if m.dryRun {
 		taskName = "alter-table (DRY RUN)"
 	}
 
-	if err := m.checkOtherActiveConnections(taskName, tableName); err != nil {
+	if err := m.checkOtherActiveConnections(taskName, query.TableName); err != nil {
 		return err
 	}
 
-	rowCount, err := m.db.GetTableRowCount(tableName)
-	if err != nil {
-		m.logger.Warnf("Failed to get row count for table %s: %v", tableName, err)
-		rowCount = 0
-	}
+	cleanedQuery := strings.ReplaceAll(query.Query, "`", "")
+	quotedQuery := fmt.Sprintf("`%s`", cleanedQuery)
 
-	cleanedQuery := strings.ReplaceAll(fmt.Sprintf("ALTER TABLE %s %s", tableName, strings.Join(alterParts, ", ")), "`", "")
-	combinedQuery := fmt.Sprintf("`%s`", cleanedQuery)
-
-	if err := m.slack.NotifyStartWithQuery(taskName, tableName, combinedQuery, rowCount); err != nil {
+	if err := m.slack.NotifyStartWithQuery(taskName, query.TableName, quotedQuery, rowCount); err != nil {
 		m.logger.Errorf("Failed to send start notification: %v", err)
 	}
 
 	start := time.Now()
-	for _, alterPart := range alterParts {
-		query := fmt.Sprintf("ALTER TABLE %s %s", tableName, alterPart)
-		queryInfo := QueryInfo{
-			Query:     query,
-			QueryType: "ALTER",
-			TableName: tableName,
+	if err := m.executeQuery(query, taskName); err != nil {
+		if slackErr := m.slack.NotifyFailureWithQuery(taskName, query.TableName, quotedQuery, rowCount, err); slackErr != nil {
+			m.logger.Errorf("Failed to send failure notification: %v", slackErr)
 		}
-		if err := m.executeQuery(&queryInfo, "alter-table"); err != nil {
-			if slackErr := m.slack.NotifyFailureWithQuery(taskName, tableName, combinedQuery, rowCount, err); slackErr != nil {
-				m.logger.Errorf("Failed to send failure notification: %v", slackErr)
-			}
-			return err
-		}
+		return err
 	}
 
 	duration := time.Since(start)
-	if err := m.slack.NotifySuccessWithQuery(taskName, tableName, combinedQuery, rowCount, duration); err != nil {
+	if err := m.slack.NotifySuccessWithQuery(taskName, query.TableName, quotedQuery, rowCount, duration); err != nil {
 		m.logger.Errorf("Failed to send success notification: %v", err)
 	}
 
 	return nil
 }
 
-func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, rowCount int64) error {
+func (m *Manager) executeAlterTableWithPtOsc(query *QueryInfo, rowCount int64) error {
 	taskName := "pt-osc"
 	if m.dryRun {
 		taskName = "pt-osc (DRY RUN)"
 	}
 
-	if err := m.checkOtherActiveConnections(taskName, tableName); err != nil {
+	if err := m.checkOtherActiveConnections(taskName, query.TableName); err != nil {
 		return err
 	}
 
-	if err := m.checkNewTableExists(taskName, tableName); err != nil {
+	if err := m.checkNewTableExists(taskName, query.TableName); err != nil {
 		return err
 	}
 
-	combinedAlter := strings.Join(alterParts, ", ")
-	cleanedAlterQuery := strings.ReplaceAll(fmt.Sprintf("ALTER TABLE %s %s", tableName, combinedAlter), "`", "")
+	// ALTER TABLE文からALTER部分を抽出
+	alterPart := m.extractAlterStatement(query.Query)
+	if alterPart == "" {
+		return fmt.Errorf("failed to extract ALTER statement from query: %s", query.Query)
+	}
+
+	cleanedAlterQuery := strings.ReplaceAll(query.Query, "`", "")
 	alterQuery := fmt.Sprintf("`%s`", cleanedAlterQuery)
 
 	// Build detailed pt-osc command with actual parameters
 	var ptOscCommand string
 	if ptOscExecutor, ok := m.ptosc.(*ptosc.PtOscExecutor); ok {
-		ptOscArgs, _, err := ptOscExecutor.BuildArgsWithPassword(tableName, combinedAlter, m.config.Common.PtOsc, m.config.DSN, m.dryRun)
+		ptOscArgs, _, err := ptOscExecutor.BuildArgsWithPassword(query.TableName, alterPart, m.config.Common.PtOsc, m.config.DSN, m.dryRun)
 		if err != nil {
 			m.logger.Warnf("Failed to build pt-osc args for notification: %v", err)
-			cleanedPtOscCommand := strings.ReplaceAll(fmt.Sprintf("pt-online-schema-change --alter='%s' --execute", combinedAlter), "`", "")
+			cleanedPtOscCommand := strings.ReplaceAll(fmt.Sprintf("pt-online-schema-change --alter='%s' --execute", alterPart), "`", "")
 			ptOscCommand = fmt.Sprintf("`%s`", cleanedPtOscCommand)
 		} else {
 			cleanedPtOscCommand := strings.ReplaceAll(fmt.Sprintf("pt-online-schema-change %s", strings.Join(ptOscArgs, " ")), "`", "")
 			ptOscCommand = fmt.Sprintf("`%s`", cleanedPtOscCommand)
 		}
 	} else {
-		// For testing or other implementations
-		cleanedPtOscCommand := strings.ReplaceAll(fmt.Sprintf("pt-online-schema-change --alter='%s' --execute", combinedAlter), "`", "")
+		cleanedPtOscCommand := strings.ReplaceAll(fmt.Sprintf("pt-online-schema-change --alter='%s' --execute", alterPart), "`", "")
 		ptOscCommand = fmt.Sprintf("`%s`", cleanedPtOscCommand)
 	}
 
 	queryInfo := fmt.Sprintf("ALTER: %s\npt-osc: %s", alterQuery, ptOscCommand)
 
-	m.logger.Infof("Executing pt-online-schema-change for table %s (rows: %d)", tableName, rowCount)
+	m.logger.Infof("Executing pt-online-schema-change for table %s (rows: %d)", query.TableName, rowCount)
 
-	if err := m.slack.NotifyStartWithQuery(taskName, tableName, queryInfo, rowCount); err != nil {
+	if err := m.slack.NotifyStartWithQuery(taskName, query.TableName, queryInfo, rowCount); err != nil {
 		m.logger.Errorf("Failed to send start notification: %v", err)
 	}
 
 	start := time.Now()
 
 	if m.dryRun {
-		dryRunResult, err := m.ptosc.ExecuteAlterWithDryRunResult(tableName, combinedAlter, m.config.Common.PtOsc, m.config.DSN, m.dryRun)
+		dryRunResult, err := m.ptosc.ExecuteAlterWithDryRunResult(query.TableName, alterPart, m.config.Common.PtOsc, m.config.DSN, m.dryRun)
 		if err != nil {
-			if slackErr := m.slack.NotifyFailureWithQuery(taskName, tableName, queryInfo, rowCount, err); slackErr != nil {
+			if slackErr := m.slack.NotifyFailureWithQuery(taskName, query.TableName, queryInfo, rowCount, err); slackErr != nil {
 				m.logger.Errorf("Failed to send failure notification: %v", slackErr)
 			}
 			return fmt.Errorf("pt-online-schema-change dry run failed: %w", err)
@@ -293,21 +241,21 @@ func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, 
 				Warnings:         dryRunResult.Warnings,
 				Summary:          dryRunResult.Summary,
 			}
-			if err := m.slack.NotifyDryRunResult(taskName, tableName, slackDryRunResult, duration); err != nil {
+			if err := m.slack.NotifyDryRunResult(taskName, query.TableName, slackDryRunResult, duration); err != nil {
 				m.logger.Errorf("Failed to send dry run result notification: %v", err)
 			}
 		} else {
-			if err := m.slack.NotifySuccessWithQuery(taskName, tableName, queryInfo, rowCount, duration); err != nil {
+			if err := m.slack.NotifySuccessWithQuery(taskName, query.TableName, queryInfo, rowCount, duration); err != nil {
 				m.logger.Errorf("Failed to send success notification: %v", err)
 			}
 		}
 	} else {
-		if err := m.ptosc.ExecuteAlter(tableName, combinedAlter, m.config.Common.PtOsc, m.config.DSN, m.dryRun); err != nil {
+		if err := m.ptosc.ExecuteAlter(query.TableName, alterPart, m.config.Common.PtOsc, m.config.DSN, m.dryRun); err != nil {
 			var ptOscLog string
 			if ptOscExecutor, ok := m.ptosc.(*ptosc.PtOscExecutor); ok {
 				ptOscLog = ptOscExecutor.GetOutputSummary()
 			}
-			if slackErr := m.slack.NotifyFailureWithQueryAndLog(taskName, tableName, queryInfo, rowCount, err, ptOscLog); slackErr != nil {
+			if slackErr := m.slack.NotifyFailureWithQueryAndLog(taskName, query.TableName, queryInfo, rowCount, err, ptOscLog); slackErr != nil {
 				m.logger.Errorf("Failed to send failure notification: %v", slackErr)
 			}
 			return fmt.Errorf("pt-online-schema-change failed: %w", err)
@@ -319,15 +267,15 @@ func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, 
 			ptOscLog = ptOscExecutor.GetOutputSummary()
 		}
 
-		newRowCount, err := m.db.GetNewTableRowCount(tableName)
+		newRowCount, err := m.db.GetNewTableRowCount(query.TableName)
 		if err != nil {
-			m.logger.Warnf("Failed to get new table row count for %s: %v", tableName, err)
-			if slackErr := m.slack.NotifySuccessWithQueryAndLog(taskName, tableName, queryInfo, rowCount, duration, ptOscLog); slackErr != nil {
+			m.logger.Warnf("Failed to get new table row count for %s: %v", query.TableName, err)
+			if slackErr := m.slack.NotifySuccessWithQueryAndLog(taskName, query.TableName, queryInfo, rowCount, duration, ptOscLog); slackErr != nil {
 				m.logger.Errorf("Failed to send success notification: %v", slackErr)
 			}
 		} else {
-			m.logger.Infof("pt-osc completed for table %s: original=%d, new=%d", tableName, rowCount, newRowCount)
-			if err := m.slack.NotifyPtOscCompletionWithNewTableCount(taskName, tableName, rowCount, newRowCount, duration, ptOscLog); err != nil {
+			m.logger.Infof("pt-osc completed for table %s: original=%d, new=%d", query.TableName, rowCount, newRowCount)
+			if err := m.slack.NotifyPtOscCompletionWithNewTableCount(taskName, query.TableName, rowCount, newRowCount, duration, ptOscLog); err != nil {
 				m.logger.Errorf("Failed to send completion notification: %v", err)
 			}
 		}
@@ -336,40 +284,39 @@ func (m *Manager) executeLargeAlterQuery(tableName string, alterParts []string, 
 	return nil
 }
 
-func (m *Manager) executeSmallQueries(queries []QueryInfo) error {
-	for _, queryInfo := range queries {
-		m.logger.Infof("Executing query: %s", queryInfo.Query)
+func (m *Manager) executeSmallQuery(query *QueryInfo) error {
+	taskName := "small-query"
+	if m.dryRun {
+		taskName = "small-query (DRY RUN)"
+	}
 
-		var rowCount int64 = 0
-		if queryInfo.TableName != "" {
-			if count, err := m.db.GetTableRowCount(queryInfo.TableName); err == nil {
-				rowCount = count
-			}
-		}
-
-		cleanedQuery := strings.ReplaceAll(queryInfo.Query, "`", "")
-		quotedQuery := fmt.Sprintf("`%s`", cleanedQuery)
-		taskName := "small-query"
-		if m.dryRun {
-			taskName = "small-query (DRY RUN)"
-		}
-		if err := m.slack.NotifyStartWithQuery(taskName, queryInfo.TableName, quotedQuery, rowCount); err != nil {
-			m.logger.Errorf("Failed to send start notification: %v", err)
-		}
-
-		start := time.Now()
-		if err := m.executeQuery(&queryInfo, "small-query"); err != nil {
-			if slackErr := m.slack.NotifyFailureWithQuery(taskName, queryInfo.TableName, quotedQuery, rowCount, err); slackErr != nil {
-				m.logger.Errorf("Failed to send failure notification: %v", slackErr)
-			}
-			return err
-		}
-
-		duration := time.Since(start)
-		if err := m.slack.NotifySuccessWithQuery(taskName, queryInfo.TableName, quotedQuery, rowCount, duration); err != nil {
-			m.logger.Errorf("Failed to send success notification: %v", err)
+	var rowCount int64 = 0
+	if query.TableName != "" {
+		if count, err := m.db.GetTableRowCount(query.TableName); err == nil {
+			rowCount = count
 		}
 	}
+
+	cleanedQuery := strings.ReplaceAll(query.Query, "`", "")
+	quotedQuery := fmt.Sprintf("`%s`", cleanedQuery)
+
+	if err := m.slack.NotifyStartWithQuery(taskName, query.TableName, quotedQuery, rowCount); err != nil {
+		m.logger.Errorf("Failed to send start notification: %v", err)
+	}
+
+	start := time.Now()
+	if err := m.executeQuery(query, taskName); err != nil {
+		if slackErr := m.slack.NotifyFailureWithQuery(taskName, query.TableName, quotedQuery, rowCount, err); slackErr != nil {
+			m.logger.Errorf("Failed to send failure notification: %v", slackErr)
+		}
+		return err
+	}
+
+	duration := time.Since(start)
+	if err := m.slack.NotifySuccessWithQuery(taskName, query.TableName, quotedQuery, rowCount, duration); err != nil {
+		m.logger.Errorf("Failed to send success notification: %v", err)
+	}
+
 	return nil
 }
 
