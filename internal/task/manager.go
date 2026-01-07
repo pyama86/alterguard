@@ -85,10 +85,21 @@ func (m *Manager) ExecuteAllTasks() error {
 		return fmt.Errorf("failed to parse queries: %w", err)
 	}
 
+	// 全体の開始を通知
+	if err := m.slack.NotifyAllTasksStart(len(queries)); err != nil {
+		m.logger.Errorf("Failed to send all tasks start notification: %v", err)
+	}
+
+	start := time.Now()
+
 	tableGroups := m.groupQueriesByTable(queries)
 
 	for _, group := range tableGroups {
 		if err := m.executeTableGroup(group.TableName, group); err != nil {
+			// 失敗時の通知
+			if slackErr := m.slack.NotifyAllTasksFailure(len(queries), err); slackErr != nil {
+				m.logger.Errorf("Failed to send all tasks failure notification: %v", slackErr)
+			}
 			return fmt.Errorf("failed to execute queries for table %s: %w", group.TableName, err)
 		}
 	}
@@ -106,19 +117,30 @@ func (m *Manager) ExecuteAllTasks() error {
 				m.logger.Errorf("Failed to send start notification: %v", err)
 			}
 
-			start := time.Now()
+			queryStart := time.Now()
 			if err := m.executeQuery(&query, "non-table-query"); err != nil {
 				if slackErr := m.slack.NotifyFailureWithQuery(taskName, query.TableName, quotedQuery, 0, err); slackErr != nil {
 					m.logger.Errorf("Failed to send failure notification: %v", slackErr)
 				}
+				// 失敗時の通知
+				if slackErr := m.slack.NotifyAllTasksFailure(len(queries), err); slackErr != nil {
+					m.logger.Errorf("Failed to send all tasks failure notification: %v", slackErr)
+				}
 				return fmt.Errorf("failed to execute query: %w", err)
 			}
 
-			duration := time.Since(start)
+			duration := time.Since(queryStart)
 			if err := m.slack.NotifySuccessWithQuery(taskName, query.TableName, quotedQuery, 0, duration); err != nil {
 				m.logger.Errorf("Failed to send success notification: %v", err)
 			}
 		}
+	}
+
+	totalDuration := time.Since(start)
+
+	// 全体の完了を通知
+	if err := m.slack.NotifyAllTasksSuccess(len(queries), totalDuration); err != nil {
+		m.logger.Errorf("Failed to send all tasks success notification: %v", err)
 	}
 
 	m.logger.Info("All queries completed successfully")

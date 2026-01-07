@@ -200,6 +200,21 @@ func (m *MockSlackNotifier) NotifyPtOscPreCheckFailure(taskName, tableName strin
 	return args.Error(0)
 }
 
+func (m *MockSlackNotifier) NotifyAllTasksStart(totalQueries int) error {
+	args := m.Called(totalQueries)
+	return args.Error(0)
+}
+
+func (m *MockSlackNotifier) NotifyAllTasksSuccess(totalQueries int, duration time.Duration) error {
+	args := m.Called(totalQueries, duration)
+	return args.Error(0)
+}
+
+func (m *MockSlackNotifier) NotifyAllTasksFailure(totalQueries int, err error) error {
+	args := m.Called(totalQueries, err)
+	return args.Error(0)
+}
+
 func TestExecuteAllTasks(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -222,6 +237,7 @@ func TestExecuteAllTasks(t *testing.T) {
 			expectError:    false,
 			expectedMethod: "ALTER",
 			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
+				m.On("NotifyAllTasksStart", len(queries)).Return(nil)
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
 					combinedQuery := fmt.Sprintf("`ALTER TABLE %s ADD COLUMN foo INT`", tableName)
@@ -234,6 +250,7 @@ func TestExecuteAllTasks(t *testing.T) {
 				for _, query := range queries {
 					d.On("ExecuteAlter", query).Return(nil)
 				}
+				m.On("NotifyAllTasksSuccess", len(queries), mock.Anything).Return(nil)
 			},
 		},
 		{
@@ -249,6 +266,7 @@ func TestExecuteAllTasks(t *testing.T) {
 			expectError:    false,
 			expectedMethod: "PT-OSC",
 			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
+				m.On("NotifyAllTasksStart", len(queries)).Return(nil)
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
 				}
@@ -265,6 +283,7 @@ func TestExecuteAllTasks(t *testing.T) {
 				m.On("NotifyPtOscCompletionWithNewTableCount", "pt-osc", "table2", int64(2000), int64(1950), mock.Anything, mock.Anything).Return(nil)
 				p.On("ExecuteAlter", "table2", "ADD COLUMN bar INT", config.PtOscConfig{}, "test-dsn", false).Return(nil)
 				d.On("GetNewTableRowCount", "table2").Return(int64(1950), nil)
+				m.On("NotifyAllTasksSuccess", len(queries), mock.Anything).Return(nil)
 			},
 		},
 		{
@@ -280,6 +299,7 @@ func TestExecuteAllTasks(t *testing.T) {
 			expectError:    false,
 			expectedMethod: "MIXED",
 			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
+				m.On("NotifyAllTasksStart", len(queries)).Return(nil)
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
 					m.On("NotifyStartWithQuery", "alter-table", tableName, "`ALTER TABLE existing_table ADD COLUMN new_col INT`", rowCount).Return(nil)
@@ -299,6 +319,7 @@ func TestExecuteAllTasks(t *testing.T) {
 				for _, query := range queries {
 					d.On("ExecuteAlter", query).Return(nil)
 				}
+				m.On("NotifyAllTasksSuccess", len(queries), mock.Anything).Return(nil)
 			},
 		},
 		{
@@ -314,6 +335,7 @@ func TestExecuteAllTasks(t *testing.T) {
 			expectError:    false,
 			expectedMethod: "DRY_RUN",
 			initMock: func(queries []string, rowCounts map[string]int64, d *MockDBClient, p *MockPtOscExecutor, m *MockSlackNotifier) {
+				m.On("NotifyAllTasksStart", len(queries)).Return(nil)
 				for tableName, rowCount := range rowCounts {
 					d.On("GetTableRowCount", tableName).Return(rowCount, nil)
 					m.On("NotifyStartWithQuery", "alter-table (DRY RUN)", tableName, "`ALTER TABLE table2 ADD COLUMN bar INT`", rowCount).Return(nil)
@@ -328,6 +350,7 @@ func TestExecuteAllTasks(t *testing.T) {
 				d.On("GetTableRowCount", "old_table").Return(int64(0), errors.New("table not found"))
 				m.On("NotifyStartWithQuery", "small-query (DRY RUN)", "old_table", "`DROP TABLE old_table`", int64(0)).Return(nil)
 				m.On("NotifySuccessWithQuery", "small-query (DRY RUN)", "old_table", "`DROP TABLE old_table`", int64(0), mock.Anything).Return(nil)
+				m.On("NotifyAllTasksSuccess", len(queries), mock.Anything).Return(nil)
 			},
 		},
 	}
@@ -960,6 +983,9 @@ func TestPtOscWithNewTableCount(t *testing.T) {
 		DSN: "test-dsn",
 	}
 
+	// 全体の開始通知
+	mockSlack.On("NotifyAllTasksStart", 1).Return(nil)
+
 	// 大きなテーブル（pt-oscを使用）
 	mockDB.On("GetTableRowCount", "large_table").Return(int64(5000), nil)
 	mockDB.On("CheckNewTableExists", "large_table").Return(false, nil) // 事前チェック: _large_table_newは存在しない
@@ -969,6 +995,9 @@ func TestPtOscWithNewTableCount(t *testing.T) {
 	mockSlack.On("NotifyStartWithQuery", "pt-osc", "large_table", largeAlterQuery, int64(5000)).Return(nil)
 	mockSlack.On("NotifyPtOscCompletionWithNewTableCount", "pt-osc", "large_table", int64(5000), int64(5001), mock.Anything, mock.Anything).Return(nil)
 	mockPtOsc.On("ExecuteAlter", "large_table", "ADD COLUMN new_col INT", config.PtOscConfig{}, "test-dsn", false).Return(nil)
+
+	// 全体の完了通知
+	mockSlack.On("NotifyAllTasksSuccess", 1, mock.Anything).Return(nil)
 
 	mockPtArchiver := &MockPtArchiverExecutor{}
 	manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, false)
@@ -1116,6 +1145,9 @@ func TestConnectionCheck(t *testing.T) {
 			mockPtArchiver := &MockPtArchiverExecutor{}
 			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, false)
 
+			// 全体の開始通知
+			mockSlack.On("NotifyAllTasksStart", 1).Return(nil)
+
 			// 接続チェックが有効な場合のモック設定
 			if tt.connectionCheckEnabled {
 				if tt.connectionCheckError != nil {
@@ -1136,6 +1168,9 @@ func TestConnectionCheck(t *testing.T) {
 				mockSlack.On("NotifyStartWithQuery", "alter-table", "test_table", "`ALTER TABLE test_table ADD COLUMN foo INT`", int64(500)).Return(nil)
 				mockSlack.On("NotifySuccessWithQuery", "alter-table", "test_table", "`ALTER TABLE test_table ADD COLUMN foo INT`", int64(500), mock.Anything).Return(nil)
 				mockDB.On("ExecuteAlter", "ALTER TABLE test_table ADD COLUMN foo INT").Return(nil)
+				mockSlack.On("NotifyAllTasksSuccess", 1, mock.Anything).Return(nil)
+			} else {
+				mockSlack.On("NotifyAllTasksFailure", 1, mock.Anything).Return(nil)
 			}
 
 			err := manager.ExecuteAllTasks()
@@ -1239,8 +1274,10 @@ func TestExecuteAllTasks_PreservesInputOrder(t *testing.T) {
 		}
 	}).Return(nil)
 
+	mockSlack.On("NotifyAllTasksStart", len(queries)).Return(nil)
 	mockSlack.On("NotifyStartWithQuery", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockSlack.On("NotifySuccessWithQuery", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockSlack.On("NotifyAllTasksSuccess", len(queries), mock.Anything).Return(nil)
 
 	cfg := &config.Config{
 		Queries: queries,
