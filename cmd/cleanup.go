@@ -70,7 +70,7 @@ func cleanupTable(tableName string) error {
 	logger.Info("Database connection established")
 
 	// Initialize pt-osc executor (not used for cleanup but required for manager)
-	ptoscExecutor := ptosc.NewPtOscExecutor(logger)
+	ptoscExecutor := ptosc.NewPtOscExecutor(logger, dbClient)
 
 	// Initialize pt-archiver executor (used for cleanup if enabled)
 	ptarchiverExecutor := ptarchiver.NewPtArchiverExecutor(logger)

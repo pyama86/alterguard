@@ -7,6 +7,12 @@ pt_osc:
   statistics: true
   dry_run: false
   # no_check_unique_key_change: false  # Disable unique key change check (default: false)
+  # Aurora MySQL では recursion_method がレプリカ遅延を検出できないため、information_schema.REPLICA_HOST_STATUS を見て pause-file で抑制する。
+  # aurora_replica_check:
+  #   enabled: true
+  #   max_lag_ms: 1000
+  #   check_interval: 5s
+  #   pause_file_path: /tmp/alterguard-ptosc-pause
 
 pt_osc_threshold: 1000
 

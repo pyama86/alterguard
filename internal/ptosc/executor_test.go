@@ -11,7 +11,7 @@ import (
 
 func TestBuildArgsWithPassword(t *testing.T) {
 	logger := logrus.New()
-	executor := NewPtOscExecutor(logger)
+	executor := NewPtOscExecutor(logger, nil)
 
 	tests := []struct {
 		name             string
@@ -248,9 +248,45 @@ func TestBuildArgsWithPassword(t *testing.T) {
 	}
 }
 
+func TestBuildArgsWithAuroraMonitor(t *testing.T) {
+	logger := logrus.New()
+	executor := NewPtOscExecutor(logger, nil)
+
+	monitor := &AuroraMonitor{pauseFilePath: "/tmp/test-pause"}
+
+	args, password, err := executor.buildArgsWithMonitor(
+		"users",
+		"ADD COLUMN foo INT",
+		config.PtOscConfig{},
+		"user:pass@tcp(localhost:3306)/testdb",
+		false,
+		monitor,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "pass", password)
+	assert.Contains(t, args, "--pause-file=/tmp/test-pause")
+}
+
+func TestBuildArgsWithoutMonitorOmitsPauseFile(t *testing.T) {
+	logger := logrus.New()
+	executor := NewPtOscExecutor(logger, nil)
+
+	args, _, err := executor.BuildArgsWithPassword(
+		"users",
+		"ADD COLUMN foo INT",
+		config.PtOscConfig{},
+		"user:pass@tcp(localhost:3306)/testdb",
+		false,
+	)
+	require.NoError(t, err)
+	for _, a := range args {
+		assert.NotContains(t, a, "--pause-file")
+	}
+}
+
 func TestContainsErrorPattern(t *testing.T) {
 	logger := logrus.New()
-	executor := NewPtOscExecutor(logger)
+	executor := NewPtOscExecutor(logger, nil)
 
 	tests := []struct {
 		name     string
@@ -379,7 +415,7 @@ func TestContainsErrorPattern(t *testing.T) {
 
 func TestParseDSN(t *testing.T) {
 	logger := logrus.New()
-	executor := NewPtOscExecutor(logger)
+	executor := NewPtOscExecutor(logger, nil)
 
 	tests := []struct {
 		name             string

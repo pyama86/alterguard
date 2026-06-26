@@ -57,7 +57,7 @@ func swapTable(tableName string) error {
 	logger.Info("Database connection established")
 
 	// Initialize pt-osc executor (not used for swap but required for manager)
-	ptoscExecutor := ptosc.NewPtOscExecutor(logger)
+	ptoscExecutor := ptosc.NewPtOscExecutor(logger, dbClient)
 
 	// Initialize pt-archiver executor (not used for swap but required for manager)
 	ptarchiverExecutor := ptarchiver.NewPtArchiverExecutor(logger)

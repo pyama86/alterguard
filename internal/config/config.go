@@ -22,18 +22,26 @@ type CommonConfig struct {
 }
 
 type PtOscConfig struct {
-	Charset                string  `yaml:"charset"`
-	RecursionMethod        string  `yaml:"recursion_method"`
-	NoSwapTables           bool    `yaml:"no_swap_tables"`
-	ChunkSize              int     `yaml:"chunk_size"`
-	MaxLag                 float64 `yaml:"max_lag"`
-	Statistics             bool    `yaml:"statistics"`
-	DryRun                 bool    `yaml:"dry_run"`
-	NoDropTriggers         bool    `yaml:"no_drop_triggers"`
-	NoDropNewTable         bool    `yaml:"no_drop_new_table"`
-	NoDropOldTable         bool    `yaml:"no_drop_old_table"`
-	NoCheckUniqueKeyChange bool    `yaml:"no_check_unique_key_change"`
-	NoCheckAlter           bool    `yaml:"no_check_alter"`
+	Charset                string                   `yaml:"charset"`
+	RecursionMethod        string                   `yaml:"recursion_method"`
+	NoSwapTables           bool                     `yaml:"no_swap_tables"`
+	ChunkSize              int                      `yaml:"chunk_size"`
+	MaxLag                 float64                  `yaml:"max_lag"`
+	Statistics             bool                     `yaml:"statistics"`
+	DryRun                 bool                     `yaml:"dry_run"`
+	NoDropTriggers         bool                     `yaml:"no_drop_triggers"`
+	NoDropNewTable         bool                     `yaml:"no_drop_new_table"`
+	NoDropOldTable         bool                     `yaml:"no_drop_old_table"`
+	NoCheckUniqueKeyChange bool                     `yaml:"no_check_unique_key_change"`
+	NoCheckAlter           bool                     `yaml:"no_check_alter"`
+	AuroraReplicaCheck     AuroraReplicaCheckConfig `yaml:"aurora_replica_check"`
+}
+
+type AuroraReplicaCheckConfig struct {
+	Enabled       bool    `yaml:"enabled"`
+	MaxLagMs      float64 `yaml:"max_lag_ms"`
+	CheckInterval string  `yaml:"check_interval"`
+	PauseFilePath string  `yaml:"pause_file_path"`
 }
 
 type PtArchiverConfig struct {
