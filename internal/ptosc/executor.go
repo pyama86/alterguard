@@ -2,6 +2,7 @@ package ptosc
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os/exec"
@@ -28,17 +29,19 @@ type Executor interface {
 }
 
 type PtOscExecutor struct {
-	logger        *logrus.Logger
-	hasError      bool
-	errorMessages []string
-	outputLines   []string
-	outputSummary string
-	mutex         sync.Mutex
+	logger            *logrus.Logger
+	replicaLagFetcher ReplicaLagFetcher
+	hasError          bool
+	errorMessages     []string
+	outputLines       []string
+	outputSummary     string
+	mutex             sync.Mutex
 }
 
-func NewPtOscExecutor(logger *logrus.Logger) *PtOscExecutor {
+func NewPtOscExecutor(logger *logrus.Logger, replicaLagFetcher ReplicaLagFetcher) *PtOscExecutor {
 	return &PtOscExecutor{
-		logger: logger,
+		logger:            logger,
+		replicaLagFetcher: replicaLagFetcher,
 	}
 }
 
@@ -50,7 +53,15 @@ func (e *PtOscExecutor) ExecuteAlter(tableName, alterStatement string, ptOscConf
 	e.outputSummary = ""
 	e.mutex.Unlock()
 
-	args, password, err := e.BuildArgsWithPassword(tableName, alterStatement, ptOscConfig, dsn, forceDryRun)
+	monitor, monitorCancel, err := e.startAuroraMonitorIfEnabled(ptOscConfig, forceDryRun)
+	if err != nil {
+		return err
+	}
+	if monitorCancel != nil {
+		defer monitorCancel()
+	}
+
+	args, password, err := e.buildArgsWithMonitor(tableName, alterStatement, ptOscConfig, dsn, forceDryRun, monitor)
 	if err != nil {
 		return fmt.Errorf("failed to build pt-osc arguments: %w", err)
 	}
@@ -225,6 +236,16 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 	rawDSN string,
 	forceDryRun bool,
 ) ([]string, string, error) {
+	return e.buildArgsWithMonitor(tableName, alterStatement, ptOscConfig, rawDSN, forceDryRun, nil)
+}
+
+func (e *PtOscExecutor) buildArgsWithMonitor(
+	tableName, alterStatement string,
+	ptOscConfig config.PtOscConfig,
+	rawDSN string,
+	forceDryRun bool,
+	monitor *AuroraMonitor,
+) ([]string, string, error) {
 	host, port, database, user, password, err := e.ParseDSN(rawDSN)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to parse DSN: %w", err)
@@ -292,6 +313,10 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 		args = append(args, "--no-check-alter")
 	}
 
+	if monitor != nil {
+		args = append(args, fmt.Sprintf("--pause-file=%s", monitor.PauseFilePath()))
+	}
+
 	if forceDryRun || ptOscConfig.DryRun {
 		args = append(args, "--dry-run")
 	} else {
@@ -301,6 +326,34 @@ func (e *PtOscExecutor) BuildArgsWithPassword(
 	args = append(args, ptOscDSN)
 
 	return args, password, nil
+}
+
+func (e *PtOscExecutor) startAuroraMonitorIfEnabled(
+	ptOscConfig config.PtOscConfig,
+	forceDryRun bool,
+) (*AuroraMonitor, context.CancelFunc, error) {
+	if forceDryRun || ptOscConfig.DryRun {
+		return nil, nil, nil
+	}
+	if !ptOscConfig.AuroraReplicaCheck.Enabled {
+		return nil, nil, nil
+	}
+	if e.replicaLagFetcher == nil {
+		return nil, nil, fmt.Errorf("aurora replica check is enabled but replica lag fetcher is not configured")
+	}
+
+	monitor, err := NewAuroraMonitor(ptOscConfig.AuroraReplicaCheck, e.replicaLagFetcher, e.logger)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := monitor.Preflight(); err != nil {
+		return nil, nil, fmt.Errorf("aurora replica check preflight failed: %w", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go monitor.Run(ctx)
+	return monitor, cancel, nil
 }
 
 func (e *PtOscExecutor) ParseDSN(dsn string) (host, port, database, user, password string, err error) {

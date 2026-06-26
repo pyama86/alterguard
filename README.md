@@ -60,6 +60,11 @@ pt_osc:
   no_drop_old_table: false
   no_check_unique_key_change: false
   no_check_alter: false
+  aurora_replica_check:
+    enabled: false
+    max_lag_ms: 1000
+    check_interval: 5s
+    pause_file_path: /tmp/alterguard-ptosc-pause
 
 pt_osc_threshold: 1000000
 
@@ -119,6 +124,25 @@ buffer_pool_size_threshold_mb: 100.0
 | `no_drop_old_table`         | bool    | false   | Do not drop old table after swap                                                   |
 | `no_check_unique_key_change`| bool    | false   | Disable unique key change check. When true, pt-osc can run even if the ALTER adds a unique index (bypasses pt-osc default safety check) |
 | `no_check_alter`            | bool    | false   | Disable ALTER statement validation. When true, pt-osc can run even if the ALTER contains potentially unsafe operations like column renames (bypasses pt-osc default safety check) |
+| `aurora_replica_check`      | object  | -       | Aurora reader replica lag monitor (see below) |
+
+#### Aurora Replica Check Section (`pt_osc.aurora_replica_check`)
+
+For Amazon Aurora MySQL clusters, pt-osc's standard `recursion_method` cannot observe reader lag. When enabled, alterguard polls `information_schema.REPLICA_HOST_STATUS` while pt-osc runs; if the maximum reader lag exceeds `max_lag_ms`, alterguard writes the pause file passed to pt-osc as `--pause-file`, which automatically suspends pt-osc until the lag recovers and the file is removed.
+
+| Option            | Type    | Default                          | Description                                                                              |
+| ----------------- | ------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
+| `enabled`         | bool    | false                            | Enable Aurora reader lag monitoring                                                      |
+| `max_lag_ms`      | float64 | 0                                | Lag threshold in milliseconds. Above this value the pause file is created                |
+| `check_interval`  | string  | 5s                               | Poll interval (Go duration string, e.g. `1s`, `500ms`)                                   |
+| `pause_file_path` | string  | `/tmp/alterguard-ptosc-pause`    | Pause file location passed to pt-osc                                                     |
+
+When enabled, alterguard performs a preflight before launching pt-osc:
+
+1. Creates and removes the pause file to verify filesystem permissions.
+2. Issues a `SELECT` against `information_schema.REPLICA_HOST_STATUS` to verify read permissions.
+
+If either check fails, pt-osc is **not** started and an error is returned. The required MySQL privileges are described in the *Aurora support* section below.
 
 #### Global Settings
 
@@ -381,6 +405,24 @@ echo "SLACK_WEBHOOK_URL=https://hooks.slack.com/services/..." >> .env
 # Run with stdin input
 echo "ALTER TABLE test ADD COLUMN new_col INT;" | ./alterguard run --common-config examples/config-common.yaml --stdin
 ```
+
+## Aurora Support
+
+When running against an Amazon Aurora MySQL cluster, enable `pt_osc.aurora_replica_check` to throttle pt-osc based on reader replica lag observed in `information_schema.REPLICA_HOST_STATUS`.
+
+### Required MySQL Privileges
+
+The user specified in `DATABASE_DSN` must be able to read `information_schema.REPLICA_HOST_STATUS`. In Aurora this view is exposed via the standard `SELECT` privilege on `information_schema` (already implicit for any authenticated user), but make sure that the role used has not been further restricted, e.g.:
+
+```sql
+GRANT SELECT ON `information_schema`.* TO 'alterguard'@'%';
+```
+
+The other privileges already required by pt-osc and alterguard remain unchanged (`ALTER`, `CREATE`, `DROP`, `INSERT`, `UPDATE`, `DELETE`, `INDEX`, `LOCK TABLES`, `TRIGGER`, `PROCESS`, `REPLICATION CLIENT`).
+
+### Required OS Permissions
+
+The process running alterguard must be able to create and remove files at `pause_file_path`. The default `/tmp/alterguard-ptosc-pause` works for most setups; in Kubernetes ensure the path is writable (`emptyDir` volume mount, or default writable filesystem).
 
 ## License
 

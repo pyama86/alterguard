@@ -85,7 +85,7 @@ func runTasks() error {
 	logger.Info("Database connection established")
 
 	// Initialize pt-osc executor
-	ptoscExecutor := ptosc.NewPtOscExecutor(logger)
+	ptoscExecutor := ptosc.NewPtOscExecutor(logger, dbClient)
 
 	// Initialize pt-archiver executor
 	ptarchiverExecutor := ptarchiver.NewPtArchiverExecutor(logger)

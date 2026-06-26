@@ -25,6 +25,7 @@ type Client interface {
 	GetCurrentUser() (string, error)
 	AnalyzeTable(tableName string) error
 	GetTableBufferPoolSizeMB(schemaName, tableName string) (float64, error)
+	GetMaxAuroraReplicaLagMs() (float64, error)
 	Close() error
 }
 
@@ -307,6 +308,26 @@ func (c *MySQLClient) GetTableBufferPoolSizeMB(schemaName, tableName string) (fl
 
 	c.logger.Infof("Buffer pool size for table %s: %.2f MB", fullTableName, sizeMB)
 	return sizeMB, nil
+}
+
+func (c *MySQLClient) GetMaxAuroraReplicaLagMs() (float64, error) {
+	var lagMs sql.NullFloat64
+
+	query := `
+		SELECT MAX(replica_lag_in_milliseconds)
+		FROM information_schema.REPLICA_HOST_STATUS
+		WHERE session_id <> 'MASTER_SESSION_ID'
+	`
+
+	err := c.db.Get(&lagMs, query)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query REPLICA_HOST_STATUS: %w", err)
+	}
+
+	if !lagMs.Valid {
+		return 0, nil
+	}
+	return lagMs.Float64, nil
 }
 
 func (c *MySQLClient) Close() error {

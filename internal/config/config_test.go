@@ -181,6 +181,68 @@ disable_analyze_table: false
 	}
 }
 
+func TestAuroraReplicaCheckConfig(t *testing.T) {
+	tests := []struct {
+		name              string
+		yamlData          string
+		wantEnabled       bool
+		wantMaxLagMs      float64
+		wantCheckInterval string
+		wantPauseFilePath string
+	}{
+		{
+			name: "aurora_replica_check not specified - defaults",
+			yamlData: `
+pt_osc:
+  charset: utf8mb4
+`,
+			wantEnabled:       false,
+			wantMaxLagMs:      0,
+			wantCheckInterval: "",
+			wantPauseFilePath: "",
+		},
+		{
+			name: "aurora_replica_check fully specified",
+			yamlData: `
+pt_osc:
+  aurora_replica_check:
+    enabled: true
+    max_lag_ms: 1500
+    check_interval: 10s
+    pause_file_path: /tmp/alterguard-ptosc-pause
+`,
+			wantEnabled:       true,
+			wantMaxLagMs:      1500,
+			wantCheckInterval: "10s",
+			wantPauseFilePath: "/tmp/alterguard-ptosc-pause",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &CommonConfig{}
+			err := yaml.Unmarshal([]byte(tt.yamlData), config)
+			if err != nil {
+				t.Fatalf("Failed to unmarshal YAML: %v", err)
+			}
+
+			got := config.PtOsc.AuroraReplicaCheck
+			if got.Enabled != tt.wantEnabled {
+				t.Errorf("Enabled = %v, want %v", got.Enabled, tt.wantEnabled)
+			}
+			if got.MaxLagMs != tt.wantMaxLagMs {
+				t.Errorf("MaxLagMs = %v, want %v", got.MaxLagMs, tt.wantMaxLagMs)
+			}
+			if got.CheckInterval != tt.wantCheckInterval {
+				t.Errorf("CheckInterval = %v, want %v", got.CheckInterval, tt.wantCheckInterval)
+			}
+			if got.PauseFilePath != tt.wantPauseFilePath {
+				t.Errorf("PauseFilePath = %v, want %v", got.PauseFilePath, tt.wantPauseFilePath)
+			}
+		})
+	}
+}
+
 func TestNoCheckUniqueKeyChange(t *testing.T) {
 	tests := []struct {
 		name      string
