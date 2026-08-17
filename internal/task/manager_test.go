@@ -849,7 +849,9 @@ func TestCleanupTable(t *testing.T) {
 				mockDB.On("GetTableBufferPoolSizeMB", "testdb", "test_table_old").Return(tt.bufferPoolSizeMB, tt.bufferPoolError)
 			}
 
-			if !tt.expectBufferPoolCheckFailed {
+			if tt.expectBufferPoolCheckFailed {
+				mockSlack.On("NotifyWarning", taskName, tt.tableName, mock.Anything).Return(nil)
+			} else {
 				mockSlack.On("NotifyStartWithQuery", taskName, tt.tableName, expectedQuery, int64(0)).Return(nil)
 				mockSlack.On("NotifySuccessWithQuery", taskName, tt.tableName, expectedQuery, int64(0), mock.Anything).Return(nil)
 
