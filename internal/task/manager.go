@@ -639,6 +639,15 @@ func (m *Manager) CleanupOldTable(tableName string) error {
 					"buffer pool size (%.2f MB) exceeds threshold (%.2f MB) for table %s",
 					bufferPoolSizeMB, m.config.Common.BufferPoolSizeThresholdMB, oldTableName)
 				m.logger.Errorf("Buffer pool size check failed: %s", errMsg)
+
+				taskName := "cleanup"
+				if m.dryRun {
+					taskName = "cleanup (DRY RUN)"
+				}
+				if slackErr := m.slack.NotifyWarning(taskName, tableName, errMsg); slackErr != nil {
+					m.logger.Errorf("Failed to send buffer pool size check warning notification: %v", slackErr)
+				}
+
 				return fmt.Errorf("buffer pool size check failed: %s", errMsg)
 			}
 		}
