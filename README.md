@@ -53,6 +53,7 @@ pt_osc:
   no_swap_tables: true
   chunk_size: 1000
   max_lag: 1.5
+  max_load: "Threads_running=25,Threads_connected:120"
   statistics: true
   dry_run: false
   no_drop_triggers: false
@@ -117,6 +118,7 @@ buffer_pool_size_threshold_mb: 100.0
 | `no_swap_tables`            | bool    | true    | Skip table swapping (manual swap required)                                         |
 | `chunk_size`                | int     | 1000    | Number of rows to process per chunk                                                |
 | `max_lag`                   | float64 | 1.5     | Maximum replication lag threshold (seconds)                                        |
+| `max_load`                  | string  | -       | Comma-separated MySQL status-variable thresholds used to pause copying, e.g. `Threads_running=25,Threads_connected:120` |
 | `statistics`                | bool    | true    | Enable statistics collection                                                       |
 | `dry_run`                   | bool    | false   | Run in dry-run mode                                                                |
 | `no_drop_triggers`          | bool    | false   | Do not drop triggers after completion                                              |

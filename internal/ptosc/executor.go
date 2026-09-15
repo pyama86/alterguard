@@ -286,6 +286,9 @@ func (e *PtOscExecutor) buildArgsWithMonitor(
 	if ptOscConfig.MaxLag > 0 {
 		args = append(args, fmt.Sprintf("--max-lag=%f", ptOscConfig.MaxLag))
 	}
+	if ptOscConfig.MaxLoad != "" {
+		args = append(args, fmt.Sprintf("--max-load=%s", ptOscConfig.MaxLoad))
+	}
 	if ptOscConfig.Statistics {
 		args = append(args, "--statistics")
 	}
