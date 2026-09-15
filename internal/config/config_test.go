@@ -129,6 +129,28 @@ func TestPtOscThresholdEnvironmentVariable(t *testing.T) {
 	}
 }
 
+func TestPtOscLoadThresholds(t *testing.T) {
+	config := &CommonConfig{}
+	err := yaml.Unmarshal([]byte(`
+pt_osc:
+  max_load: "Threads_running=25,Threads_connected:120"
+  critical_load: "Threads_running=50"
+`), config)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal YAML: %v", err)
+	}
+
+	const want = "Threads_running=25,Threads_connected:120"
+	if config.PtOsc.MaxLoad != want {
+		t.Errorf("MaxLoad = %q, want %q", config.PtOsc.MaxLoad, want)
+	}
+
+	const criticalWant = "Threads_running=50"
+	if config.PtOsc.CriticalLoad != criticalWant {
+		t.Errorf("CriticalLoad = %q, want %q", config.PtOsc.CriticalLoad, criticalWant)
+	}
+}
+
 func TestDisableAnalyzeTable(t *testing.T) {
 	tests := []struct {
 		name      string

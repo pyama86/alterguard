@@ -27,6 +27,8 @@ type PtOscConfig struct {
 	NoSwapTables           bool                     `yaml:"no_swap_tables"`
 	ChunkSize              int                      `yaml:"chunk_size"`
 	MaxLag                 float64                  `yaml:"max_lag"`
+	MaxLoad                string                   `yaml:"max_load"`
+	CriticalLoad           string                   `yaml:"critical_load"`
 	Statistics             bool                     `yaml:"statistics"`
 	DryRun                 bool                     `yaml:"dry_run"`
 	NoDropTriggers         bool                     `yaml:"no_drop_triggers"`
