@@ -289,6 +289,9 @@ func (e *PtOscExecutor) buildArgsWithMonitor(
 	if ptOscConfig.MaxLoad != "" {
 		args = append(args, fmt.Sprintf("--max-load=%s", ptOscConfig.MaxLoad))
 	}
+	if ptOscConfig.CriticalLoad != "" {
+		args = append(args, fmt.Sprintf("--critical-load=%s", ptOscConfig.CriticalLoad))
+	}
 	if ptOscConfig.Statistics {
 		args = append(args, "--statistics")
 	}

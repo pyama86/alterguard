@@ -6,6 +6,8 @@ pt_osc:
   max_lag: 1.5
   # Pause while a status variable exceeds its threshold. Comma-separated; `=` and `:` are accepted.
   # max_load: "Threads_running=25,Threads_connected:120"
+  # Abort when a status variable exceeds its threshold. Comma-separated; `=` and `:` are accepted.
+  # critical_load: "Threads_running=50"
   statistics: true
   dry_run: false
   # no_check_unique_key_change: false  # Disable unique key change check (default: false)
