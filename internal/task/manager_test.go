@@ -1449,6 +1449,7 @@ func TestExecuteAllTasks_DryRunOrdersTablesByRowCount(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"small_table", "large_table"}, executionOrder)
+	mockDB.AssertNumberOfCalls(t, "GetTableRowCount", 2)
 	mockDB.AssertExpectations(t)
 	mockPtOsc.AssertExpectations(t)
 	mockSlack.AssertExpectations(t)

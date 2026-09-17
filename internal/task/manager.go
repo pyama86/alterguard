@@ -40,10 +40,11 @@ type QueryInfo struct {
 }
 
 type TableGroup struct {
-	TableName    string
-	AlterParts   []string
-	OtherQueries []QueryInfo
-	RowCount     int64
+	TableName     string
+	AlterParts    []string
+	OtherQueries  []QueryInfo
+	RowCount      int64
+	RowCountKnown bool
 }
 
 func NewManager(db database.Client, ptoscExec ptosc.Executor, ptarchiverExec ptarchiver.Executor, slackNotifier slack.Notifier, logger *logrus.Logger, cfg *config.Config, dryRun bool) *Manager {
@@ -196,6 +197,8 @@ func (m *Manager) sortTableGroupsByRowCount(groups []*TableGroup) {
 		if err != nil {
 			m.logger.Warnf("Failed to get row count for table %s while ordering tasks, treating as 0 rows: %v", group.TableName, err)
 			rowCount = 0
+		} else {
+			group.RowCountKnown = true
 		}
 		group.RowCount = rowCount
 	}
@@ -216,23 +219,27 @@ func (m *Manager) executeTableGroup(tableName string, group *TableGroup) error {
 		return nil
 	}
 
-	rowCount, err := m.db.GetTableRowCount(tableName)
-	if err != nil {
-		m.logger.Warnf("Failed to get row count for table %s, treating as small query: %v", tableName, err)
-		return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts)
+	if len(group.OtherQueries) > 0 || !group.RowCountKnown {
+		rowCount, err := m.db.GetTableRowCount(tableName)
+		if err != nil {
+			m.logger.Warnf("Failed to get row count for table %s, treating as small query: %v", tableName, err)
+			return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts, 0)
+		}
+		group.RowCount = rowCount
+		group.RowCountKnown = true
 	}
 
 	threshold := m.config.Common.PtOscThreshold
-	m.logger.Infof("Table %s has %d rows (threshold: %d)", tableName, rowCount, threshold)
+	m.logger.Infof("Table %s has %d rows (threshold: %d)", tableName, group.RowCount, threshold)
 
-	if rowCount <= threshold {
-		return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts)
+	if group.RowCount <= threshold {
+		return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts, group.RowCount)
 	} else {
-		return m.executeLargeAlterQuery(tableName, group.AlterParts, rowCount)
+		return m.executeLargeAlterQuery(tableName, group.AlterParts, group.RowCount)
 	}
 }
 
-func (m *Manager) executeAlterPartsAsSmallQueries(tableName string, alterParts []string) error {
+func (m *Manager) executeAlterPartsAsSmallQueries(tableName string, alterParts []string, rowCount int64) error {
 	taskName := "alter-table"
 	if m.dryRun {
 		taskName = "alter-table (DRY RUN)"
@@ -240,12 +247,6 @@ func (m *Manager) executeAlterPartsAsSmallQueries(tableName string, alterParts [
 
 	if err := m.checkOtherActiveConnections(taskName, tableName); err != nil {
 		return err
-	}
-
-	rowCount, err := m.db.GetTableRowCount(tableName)
-	if err != nil {
-		m.logger.Warnf("Failed to get row count for table %s: %v", tableName, err)
-		rowCount = 0
 	}
 
 	cleanedQuery := strings.ReplaceAll(fmt.Sprintf("ALTER TABLE %s %s", tableName, strings.Join(alterParts, ", ")), "`", "")
