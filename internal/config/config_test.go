@@ -151,6 +151,30 @@ pt_osc:
 	}
 }
 
+func TestOrderByRowCountDefaultsToFalse(t *testing.T) {
+	config := &CommonConfig{}
+	err := yaml.Unmarshal([]byte("pt_osc_threshold: 1000\n"), config)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal YAML: %v", err)
+	}
+
+	if config.OrderByRowCount {
+		t.Error("OrderByRowCount should default to false")
+	}
+}
+
+func TestOrderByRowCountCanBeEnabled(t *testing.T) {
+	config := &CommonConfig{}
+	err := yaml.Unmarshal([]byte("order_by_row_count: true\n"), config)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal YAML: %v", err)
+	}
+
+	if !config.OrderByRowCount {
+		t.Error("OrderByRowCount should be true")
+	}
+}
+
 func TestDisableAnalyzeTable(t *testing.T) {
 	tests := []struct {
 		name      string

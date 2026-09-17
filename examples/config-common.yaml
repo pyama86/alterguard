@@ -19,6 +19,7 @@ pt_osc:
   #   pause_file_path: /tmp/alterguard-ptosc-pause
 
 pt_osc_threshold: 1000
+order_by_row_count: false
 
 alert:
   metadata_lock_threshold_seconds: 30

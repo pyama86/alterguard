@@ -1269,9 +1269,9 @@ func TestExecuteAllTasks_PreservesInputOrder(t *testing.T) {
 
 	var executionOrder []string
 
-	for _, tableName := range []string{"users_legacy", "users", "orders"} {
-		mockDB.On("GetTableRowCount", tableName).Return(int64(100), nil)
-	}
+	mockDB.On("GetTableRowCount", "users_legacy").Return(int64(900), nil)
+	mockDB.On("GetTableRowCount", "users").Return(int64(0), nil)
+	mockDB.On("GetTableRowCount", "orders").Return(int64(500), nil)
 
 	mockDB.On("ExecuteAlter", mock.Anything).Run(func(args mock.Arguments) {
 		query := args.String(0)
@@ -1328,12 +1328,12 @@ func TestSortTableGroupsByRowCount(t *testing.T) {
 		false,
 	)
 	groups := []*TableGroup{
-		{TableName: "large_table"},
-		{TableName: "small_table"},
-		{TableName: "medium_table"},
+		{TableName: "large_table", AlterParts: []string{"ADD COLUMN value INT"}},
+		{TableName: "small_table", AlterParts: []string{"ADD COLUMN value INT"}},
+		{TableName: "medium_table", AlterParts: []string{"ADD COLUMN value INT"}},
 	}
 
-	manager.sortTableGroupsByRowCount(groups)
+	require.NoError(t, manager.sortTableGroupsByRowCount(groups))
 
 	assert.Equal(t, []string{"small_table", "medium_table", "large_table"}, []string{
 		groups[0].TableName,
@@ -1348,7 +1348,6 @@ func TestSortTableGroupsByRowCount_PreservesSameTableQueryOrder(t *testing.T) {
 	logger.SetLevel(logrus.FatalLevel)
 
 	mockDB := &MockDBClient{}
-	mockDB.On("GetTableRowCount", "new_table").Return(int64(0), errors.New("table not found"))
 	mockDB.On("GetTableRowCount", "existing_table").Return(int64(5000), nil)
 
 	manager := NewManager(
@@ -1368,7 +1367,7 @@ func TestSortTableGroupsByRowCount_PreservesSameTableQueryOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	groups := manager.groupQueriesByTable(queries)
-	manager.sortTableGroupsByRowCount(groups)
+	require.NoError(t, manager.sortTableGroupsByRowCount(groups))
 
 	require.Len(t, groups, 2)
 	assert.Equal(t, "new_table", groups[0].TableName)
@@ -1377,6 +1376,105 @@ func TestSortTableGroupsByRowCount_PreservesSameTableQueryOrder(t *testing.T) {
 	assert.Equal(t, []string{"ADD COLUMN name VARCHAR(255)"}, groups[0].AlterParts)
 	assert.Equal(t, "existing_table", groups[1].TableName)
 	mockDB.AssertExpectations(t)
+}
+
+func TestSortTableGroupsByRowCount_FailsWhenRowCountCannotBeRead(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	mockDB := &MockDBClient{}
+	mockDB.On("GetTableRowCount", "large_table").Return(int64(0), errors.New("connection lost"))
+
+	manager := NewManager(
+		mockDB,
+		&MockPtOscExecutor{},
+		&MockPtArchiverExecutor{},
+		&MockSlackNotifier{},
+		logger,
+		&config.Config{},
+		false,
+	)
+	groups := []*TableGroup{{
+		TableName:  "large_table",
+		AlterParts: []string{"ADD COLUMN value INT"},
+	}}
+
+	err := manager.sortTableGroupsByRowCount(groups)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to get row count for table large_table")
+	mockDB.AssertExpectations(t)
+}
+
+func TestSortTableGroupsByRowCount_PreservesEqualRowCountOrder(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	mockDB := &MockDBClient{}
+	mockDB.On("GetTableRowCount", "first_table").Return(int64(100), nil)
+	mockDB.On("GetTableRowCount", "second_table").Return(int64(100), nil)
+
+	manager := NewManager(
+		mockDB,
+		&MockPtOscExecutor{},
+		&MockPtArchiverExecutor{},
+		&MockSlackNotifier{},
+		logger,
+		&config.Config{},
+		false,
+	)
+	groups := []*TableGroup{
+		{TableName: "first_table", AlterParts: []string{"ADD COLUMN value INT"}},
+		{TableName: "second_table", AlterParts: []string{"ADD COLUMN value INT"}},
+	}
+
+	require.NoError(t, manager.sortTableGroupsByRowCount(groups))
+
+	assert.Equal(t, "first_table", groups[0].TableName)
+	assert.Equal(t, "second_table", groups[1].TableName)
+	mockDB.AssertExpectations(t)
+}
+
+func TestExecuteAllTasks_FailsWhenAlterRowCountCannotBeRead(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	mockDB := &MockDBClient{}
+	mockPtOsc := &MockPtOscExecutor{}
+	mockSlack := &MockSlackNotifier{}
+	queries := []string{"ALTER TABLE large_table ADD COLUMN value INT"}
+
+	mockDB.On("GetTableRowCount", "large_table").Return(int64(0), errors.New("connection lost"))
+	mockSlack.On("NotifyAllTasksStart", len(queries)).Return(nil)
+	mockSlack.On("NotifyAllTasksFailure", len(queries), mock.MatchedBy(func(err error) bool {
+		return strings.Contains(err.Error(), "failed to get row count for table large_table before ALTER")
+	})).Return(nil)
+
+	cfg := &config.Config{
+		Queries: queries,
+		Common: config.CommonConfig{
+			PtOscThreshold: 1000,
+		},
+		DSN: "test-dsn",
+	}
+	manager := NewManager(
+		mockDB,
+		mockPtOsc,
+		&MockPtArchiverExecutor{},
+		mockSlack,
+		logger,
+		cfg,
+		false,
+	)
+
+	err := manager.ExecuteAllTasks()
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to get row count for table large_table before ALTER")
+	mockDB.AssertNotCalled(t, "ExecuteAlter", mock.Anything)
+	mockPtOsc.AssertNotCalled(t, "ExecuteAlter", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	mockDB.AssertExpectations(t)
+	mockSlack.AssertExpectations(t)
 }
 
 func TestExecuteAllTasks_DryRunOrdersTablesByRowCount(t *testing.T) {
@@ -1427,8 +1525,9 @@ func TestExecuteAllTasks_DryRunOrdersTablesByRowCount(t *testing.T) {
 	cfg := &config.Config{
 		Queries: queries,
 		Common: config.CommonConfig{
-			PtOsc:          config.PtOscConfig{},
-			PtOscThreshold: 1000,
+			PtOsc:           config.PtOscConfig{},
+			PtOscThreshold:  1000,
+			OrderByRowCount: true,
 			ConnectionCheck: config.ConnectionCheckConfig{
 				Enabled: false,
 			},
@@ -1449,7 +1548,7 @@ func TestExecuteAllTasks_DryRunOrdersTablesByRowCount(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"small_table", "large_table"}, executionOrder)
-	mockDB.AssertNumberOfCalls(t, "GetTableRowCount", 2)
+	mockDB.AssertNumberOfCalls(t, "GetTableRowCount", 4)
 	mockDB.AssertExpectations(t)
 	mockPtOsc.AssertExpectations(t)
 	mockSlack.AssertExpectations(t)

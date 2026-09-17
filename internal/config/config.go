@@ -17,6 +17,7 @@ type CommonConfig struct {
 	PtOscThreshold            int64                 `yaml:"pt_osc_threshold"`
 	SessionConfig             SessionConfig         `yaml:"session_config"`
 	ConnectionCheck           ConnectionCheckConfig `yaml:"connection_check"`
+	OrderByRowCount           bool                  `yaml:"order_by_row_count"`
 	DisableAnalyzeTable       bool                  `yaml:"disable_analyze_table"`
 	BufferPoolSizeThresholdMB float64               `yaml:"buffer_pool_size_threshold_mb"`
 }

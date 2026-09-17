@@ -21,6 +21,7 @@ pt_archiver:
   where: "1=1"
 
 pt_osc_threshold: 1000
+order_by_row_count: false
 alert:
   metadata_lock_threshold_seconds: 30
 

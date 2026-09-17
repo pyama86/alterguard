@@ -69,6 +69,7 @@ pt_osc:
     pause_file_path: /tmp/alterguard-ptosc-pause
 
 pt_osc_threshold: 1000000
+order_by_row_count: false
 
 alert:
   metadata_lock_threshold_seconds: 30
@@ -153,6 +154,7 @@ If either check fails, pt-osc is **not** started and an error is returned. The r
 | Option                         | Type    | Default | Description                                                                              |
 | ------------------------------ | ------- | ------- | ---------------------------------------------------------------------------------------- |
 | `pt_osc_threshold`             | int64   | -       | Row count threshold for using pt-osc                                                     |
+| `order_by_row_count`            | bool    | false   | Execute table groups in ascending row-count order. Enable only when queries have no cross-table ordering dependencies |
 | `disable_analyze_table`        | bool    | false   | Disable ANALYZE TABLE execution before table swap (default: enabled)                     |
 | `buffer_pool_size_threshold_mb`| float64 | 0       | Buffer pool size threshold in MB for cleanup operations (0 = disabled, no size check) |
 
@@ -330,6 +332,7 @@ data:
       no_check_alter: false
 
     pt_osc_threshold: 1000000
+    order_by_row_count: false
 
     alert:
       metadata_lock_threshold_seconds: 30

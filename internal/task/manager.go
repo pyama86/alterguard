@@ -1,10 +1,11 @@
 package task
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,10 +41,10 @@ type QueryInfo struct {
 }
 
 type TableGroup struct {
-	TableName    string
-	AlterParts   []string
-	OtherQueries []QueryInfo
-	RowCount     int64
+	TableName     string
+	AlterParts    []string
+	OtherQueries  []QueryInfo
+	OrderRowCount int64
 }
 
 func NewManager(db database.Client, ptoscExec ptosc.Executor, ptarchiverExec ptarchiver.Executor, slackNotifier slack.Notifier, logger *logrus.Logger, cfg *config.Config, dryRun bool) *Manager {
@@ -86,15 +87,19 @@ func (m *Manager) ExecuteAllTasks() error {
 		return fmt.Errorf("failed to parse queries: %w", err)
 	}
 
+	tableGroups := m.groupQueriesByTable(queries)
+	if m.config.Common.OrderByRowCount {
+		if err := m.sortTableGroupsByRowCount(tableGroups); err != nil {
+			return fmt.Errorf("failed to order queries by table row count: %w", err)
+		}
+	}
+
 	// 全体の開始を通知
 	if err := m.slack.NotifyAllTasksStart(len(queries)); err != nil {
 		m.logger.Errorf("Failed to send all tasks start notification: %v", err)
 	}
 
 	start := time.Now()
-
-	tableGroups := m.groupQueriesByTable(queries)
-	m.sortTableGroupsByRowCount(tableGroups)
 
 	for _, group := range tableGroups {
 		if err := m.executeTableGroup(group.TableName, group); err != nil {
@@ -190,19 +195,50 @@ func (m *Manager) groupQueriesByTable(queries []QueryInfo) []*TableGroup {
 	return result
 }
 
-func (m *Manager) sortTableGroupsByRowCount(groups []*TableGroup) {
+func (m *Manager) sortTableGroupsByRowCount(groups []*TableGroup) error {
+	alterGroups := make([]*TableGroup, 0, len(groups))
 	for _, group := range groups {
+		if len(group.AlterParts) == 0 {
+			continue
+		}
+
+		if group.hasCreateQuery() {
+			group.OrderRowCount = 0
+			alterGroups = append(alterGroups, group)
+			continue
+		}
+
 		rowCount, err := m.db.GetTableRowCount(group.TableName)
 		if err != nil {
-			m.logger.Warnf("Failed to get row count for table %s while ordering tasks, treating as 0 rows: %v", group.TableName, err)
-			rowCount = 0
+			return fmt.Errorf("failed to get row count for table %s while ordering tasks: %w", group.TableName, err)
 		}
-		group.RowCount = rowCount
+		group.OrderRowCount = rowCount
+		alterGroups = append(alterGroups, group)
 	}
 
-	sort.SliceStable(groups, func(i, j int) bool {
-		return groups[i].RowCount < groups[j].RowCount
+	slices.SortStableFunc(alterGroups, func(left, right *TableGroup) int {
+		return cmp.Compare(left.OrderRowCount, right.OrderRowCount)
 	})
+
+	nextAlterGroup := 0
+	for i, group := range groups {
+		if len(group.AlterParts) == 0 {
+			continue
+		}
+		groups[i] = alterGroups[nextAlterGroup]
+		nextAlterGroup++
+	}
+
+	return nil
+}
+
+func (g *TableGroup) hasCreateQuery() bool {
+	for _, query := range g.OtherQueries {
+		if query.QueryType == "CREATE" {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) executeTableGroup(tableName string, group *TableGroup) error {
@@ -216,13 +252,18 @@ func (m *Manager) executeTableGroup(tableName string, group *TableGroup) error {
 		return nil
 	}
 
-	threshold := m.config.Common.PtOscThreshold
-	m.logger.Infof("Table %s has %d rows (threshold: %d)", tableName, group.RowCount, threshold)
+	rowCount, err := m.db.GetTableRowCount(tableName)
+	if err != nil {
+		return fmt.Errorf("failed to get row count for table %s before ALTER: %w", tableName, err)
+	}
 
-	if group.RowCount <= threshold {
-		return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts, group.RowCount)
+	threshold := m.config.Common.PtOscThreshold
+	m.logger.Infof("Table %s has %d rows (threshold: %d)", tableName, rowCount, threshold)
+
+	if rowCount <= threshold {
+		return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts, rowCount)
 	} else {
-		return m.executeLargeAlterQuery(tableName, group.AlterParts, group.RowCount)
+		return m.executeLargeAlterQuery(tableName, group.AlterParts, rowCount)
 	}
 }
 
