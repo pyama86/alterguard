@@ -40,11 +40,10 @@ type QueryInfo struct {
 }
 
 type TableGroup struct {
-	TableName     string
-	AlterParts    []string
-	OtherQueries  []QueryInfo
-	RowCount      int64
-	RowCountKnown bool
+	TableName    string
+	AlterParts   []string
+	OtherQueries []QueryInfo
+	RowCount     int64
 }
 
 func NewManager(db database.Client, ptoscExec ptosc.Executor, ptarchiverExec ptarchiver.Executor, slackNotifier slack.Notifier, logger *logrus.Logger, cfg *config.Config, dryRun bool) *Manager {
@@ -197,8 +196,6 @@ func (m *Manager) sortTableGroupsByRowCount(groups []*TableGroup) {
 		if err != nil {
 			m.logger.Warnf("Failed to get row count for table %s while ordering tasks, treating as 0 rows: %v", group.TableName, err)
 			rowCount = 0
-		} else {
-			group.RowCountKnown = true
 		}
 		group.RowCount = rowCount
 	}
@@ -217,16 +214,6 @@ func (m *Manager) executeTableGroup(tableName string, group *TableGroup) error {
 
 	if len(group.AlterParts) == 0 {
 		return nil
-	}
-
-	if len(group.OtherQueries) > 0 || !group.RowCountKnown {
-		rowCount, err := m.db.GetTableRowCount(tableName)
-		if err != nil {
-			m.logger.Warnf("Failed to get row count for table %s, treating as small query: %v", tableName, err)
-			return m.executeAlterPartsAsSmallQueries(tableName, group.AlterParts, 0)
-		}
-		group.RowCount = rowCount
-		group.RowCountKnown = true
 	}
 
 	threshold := m.config.Common.PtOscThreshold
