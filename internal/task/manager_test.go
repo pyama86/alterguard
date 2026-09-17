@@ -1308,3 +1308,148 @@ func TestExecuteAllTasks_PreservesInputOrder(t *testing.T) {
 	mockDB.AssertExpectations(t)
 	mockSlack.AssertExpectations(t)
 }
+
+func TestSortTableGroupsByRowCount(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	mockDB := &MockDBClient{}
+	mockDB.On("GetTableRowCount", "large_table").Return(int64(5000), nil)
+	mockDB.On("GetTableRowCount", "small_table").Return(int64(100), nil)
+	mockDB.On("GetTableRowCount", "medium_table").Return(int64(1000), nil)
+
+	manager := NewManager(
+		mockDB,
+		&MockPtOscExecutor{},
+		&MockPtArchiverExecutor{},
+		&MockSlackNotifier{},
+		logger,
+		&config.Config{},
+		false,
+	)
+	groups := []*TableGroup{
+		{TableName: "large_table"},
+		{TableName: "small_table"},
+		{TableName: "medium_table"},
+	}
+
+	manager.sortTableGroupsByRowCount(groups)
+
+	assert.Equal(t, []string{"small_table", "medium_table", "large_table"}, []string{
+		groups[0].TableName,
+		groups[1].TableName,
+		groups[2].TableName,
+	})
+	mockDB.AssertExpectations(t)
+}
+
+func TestSortTableGroupsByRowCount_PreservesSameTableQueryOrder(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	mockDB := &MockDBClient{}
+	mockDB.On("GetTableRowCount", "new_table").Return(int64(0), errors.New("table not found"))
+	mockDB.On("GetTableRowCount", "existing_table").Return(int64(5000), nil)
+
+	manager := NewManager(
+		mockDB,
+		&MockPtOscExecutor{},
+		&MockPtArchiverExecutor{},
+		&MockSlackNotifier{},
+		logger,
+		&config.Config{},
+		false,
+	)
+	queries, err := manager.parseQueries([]string{
+		"ALTER TABLE existing_table ADD COLUMN new_col INT",
+		"CREATE TABLE new_table (id INT PRIMARY KEY)",
+		"ALTER TABLE new_table ADD COLUMN name VARCHAR(255)",
+	})
+	require.NoError(t, err)
+
+	groups := manager.groupQueriesByTable(queries)
+	manager.sortTableGroupsByRowCount(groups)
+
+	require.Len(t, groups, 2)
+	assert.Equal(t, "new_table", groups[0].TableName)
+	require.Len(t, groups[0].OtherQueries, 1)
+	assert.Equal(t, "CREATE TABLE new_table (id INT PRIMARY KEY)", groups[0].OtherQueries[0].Query)
+	assert.Equal(t, []string{"ADD COLUMN name VARCHAR(255)"}, groups[0].AlterParts)
+	assert.Equal(t, "existing_table", groups[1].TableName)
+	mockDB.AssertExpectations(t)
+}
+
+func TestExecuteAllTasks_DryRunOrdersTablesByRowCount(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	mockDB := &MockDBClient{}
+	mockPtOsc := &MockPtOscExecutor{}
+	mockSlack := &MockSlackNotifier{}
+	queries := []string{
+		"ALTER TABLE large_table ADD COLUMN large_col INT",
+		"ALTER TABLE small_table ADD COLUMN small_col INT",
+	}
+
+	mockDB.On("GetTableRowCount", "large_table").Return(int64(5000), nil)
+	mockDB.On("GetTableRowCount", "small_table").Return(int64(100), nil)
+	mockDB.On("CheckNewTableExists", "large_table").Return(false, nil)
+	mockPtOsc.On(
+		"ExecuteAlterWithDryRunResult",
+		"large_table",
+		"ADD COLUMN large_col INT",
+		config.PtOscConfig{},
+		"test-dsn",
+		true,
+	).Return(nil, nil)
+
+	var executionOrder []string
+	mockSlack.On("NotifyAllTasksStart", len(queries)).Return(nil)
+	mockSlack.On(
+		"NotifyStartWithQuery",
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+	).Run(func(args mock.Arguments) {
+		executionOrder = append(executionOrder, args.String(1))
+	}).Return(nil)
+	mockSlack.On(
+		"NotifySuccessWithQuery",
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+	).Return(nil)
+	mockSlack.On("NotifyAllTasksSuccess", len(queries), mock.Anything).Return(nil)
+
+	cfg := &config.Config{
+		Queries: queries,
+		Common: config.CommonConfig{
+			PtOsc:          config.PtOscConfig{},
+			PtOscThreshold: 1000,
+			ConnectionCheck: config.ConnectionCheckConfig{
+				Enabled: false,
+			},
+		},
+		DSN: "test-dsn",
+	}
+	manager := NewManager(
+		mockDB,
+		mockPtOsc,
+		&MockPtArchiverExecutor{},
+		mockSlack,
+		logger,
+		cfg,
+		true,
+	)
+
+	err := manager.ExecuteAllTasks()
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"small_table", "large_table"}, executionOrder)
+	mockDB.AssertExpectations(t)
+	mockPtOsc.AssertExpectations(t)
+	mockSlack.AssertExpectations(t)
+}

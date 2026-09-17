@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -93,6 +94,7 @@ func (m *Manager) ExecuteAllTasks() error {
 	start := time.Now()
 
 	tableGroups := m.groupQueriesByTable(queries)
+	m.sortTableGroupsByRowCount(tableGroups)
 
 	for _, group := range tableGroups {
 		if err := m.executeTableGroup(group.TableName, group); err != nil {
@@ -186,6 +188,21 @@ func (m *Manager) groupQueriesByTable(queries []QueryInfo) []*TableGroup {
 	}
 
 	return result
+}
+
+func (m *Manager) sortTableGroupsByRowCount(groups []*TableGroup) {
+	for _, group := range groups {
+		rowCount, err := m.db.GetTableRowCount(group.TableName)
+		if err != nil {
+			m.logger.Warnf("Failed to get row count for table %s while ordering tasks, treating as 0 rows: %v", group.TableName, err)
+			rowCount = 0
+		}
+		group.RowCount = rowCount
+	}
+
+	sort.SliceStable(groups, func(i, j int) bool {
+		return groups[i].RowCount < groups[j].RowCount
+	})
 }
 
 func (m *Manager) executeTableGroup(tableName string, group *TableGroup) error {
