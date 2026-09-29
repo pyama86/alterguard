@@ -2,7 +2,9 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,8 +28,11 @@ type Client interface {
 	AnalyzeTable(tableName string) error
 	GetTableBufferPoolSizeMB(schemaName, tableName string) (float64, error)
 	GetMaxAuroraReplicaLagMs() (float64, error)
+	GetBinlogReplicaLagMs() (float64, error)
 	Close() error
 }
+
+var ErrReplicationStopped = errors.New("replication is stopped")
 
 func IsDuplicateError(err error) bool {
 	if mysqlErr, ok := err.(*mysql.MySQLError); ok {
@@ -330,6 +335,55 @@ func (c *MySQLClient) GetMaxAuroraReplicaLagMs() (float64, error) {
 	return lagMs.Float64, nil
 }
 
+func (c *MySQLClient) GetBinlogReplicaLagMs() (float64, error) {
+	return c.getBinlogReplicaLagMsWithDB(&sqlxStringRowsQuerier{db: c.db})
+}
+
+func (c *MySQLClient) getBinlogReplicaLagMsWithDB(db StringRowsQuerier) (float64, error) {
+	// SHOW REPLICA STATUS は Aurora MySQL v3 (MySQL 8.0.22+) 以降のみ
+	rows, err := db.QueryStringRows("SHOW REPLICA STATUS")
+	if err != nil {
+		c.logger.Debugf("SHOW REPLICA STATUS failed, falling back to SHOW SLAVE STATUS: %v", err)
+		rows, err = db.QueryStringRows("SHOW SLAVE STATUS")
+		if err != nil {
+			return 0, fmt.Errorf("failed to query replica status: %w", err)
+		}
+	}
+	if len(rows) == 0 {
+		return 0, fmt.Errorf("replication is not configured: replica status returned no rows")
+	}
+
+	var maxLagSec float64
+	for _, row := range rows {
+		lagSec, err := secondsBehindSource(row)
+		if err != nil {
+			return 0, err
+		}
+		if lagSec > maxLagSec {
+			maxLagSec = lagSec
+		}
+	}
+	return maxLagSec * 1000, nil
+}
+
+func secondsBehindSource(row map[string]sql.NullString) (float64, error) {
+	for _, column := range []string{"Seconds_Behind_Source", "Seconds_Behind_Master"} {
+		value, ok := row[column]
+		if !ok {
+			continue
+		}
+		if !value.Valid {
+			return 0, fmt.Errorf("%s is NULL: %w", column, ErrReplicationStopped)
+		}
+		lagSec, err := strconv.ParseFloat(value.String, 64)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse %s %q: %w", column, value.String, err)
+		}
+		return lagSec, nil
+	}
+	return 0, fmt.Errorf("replica status has neither Seconds_Behind_Source nor Seconds_Behind_Master column")
+}
+
 func (c *MySQLClient) Close() error {
 	if c.db != nil {
 		return c.db.Close()
@@ -340,6 +394,46 @@ func (c *MySQLClient) Close() error {
 type DBExecutor interface {
 	Get(dest any, query string, args ...any) error
 	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// 列構成がバージョンで異なる結果を列名で参照するためのクエリ実行。
+type StringRowsQuerier interface {
+	QueryStringRows(query string) ([]map[string]sql.NullString, error)
+}
+
+type sqlxStringRowsQuerier struct {
+	db *sqlx.DB
+}
+
+func (q *sqlxStringRowsQuerier) QueryStringRows(query string) ([]map[string]sql.NullString, error) {
+	rows, err := q.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []map[string]sql.NullString
+	for rows.Next() {
+		values := make([]sql.NullString, len(columns))
+		dest := make([]any, len(columns))
+		for i := range values {
+			dest[i] = &values[i]
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, err
+		}
+		row := make(map[string]sql.NullString, len(columns))
+		for i, column := range columns {
+			row[column] = values[i]
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
 }
 
 func (c *MySQLClient) getTableRowCountWithDB(db DBExecutor, table string) (int64, error) {

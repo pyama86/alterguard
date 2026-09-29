@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -314,5 +315,61 @@ pt_osc_threshold: 1000
 				t.Errorf("NoCheckUniqueKeyChange = %v, want %v", config.PtOsc.NoCheckUniqueKeyChange, tt.wantValue)
 			}
 		})
+	}
+}
+
+func TestBinlogReplicaDSNs(t *testing.T) {
+	tests := []struct {
+		name     string
+		envValue string
+		want     []string
+	}{
+		{
+			name:     "not set",
+			envValue: "",
+			want:     []string{},
+		},
+		{
+			name:     "single DSN",
+			envValue: "user:pass@tcp(cluster-b:3306)/test",
+			want:     []string{"user:pass@tcp(cluster-b:3306)/test"},
+		},
+		{
+			name:     "multiple DSNs with spaces and empty elements",
+			envValue: " user:pass@tcp(cluster-b:3306)/test , ,user:pass@tcp(cluster-c:3306)/test,",
+			want: []string{
+				"user:pass@tcp(cluster-b:3306)/test",
+				"user:pass@tcp(cluster-c:3306)/test",
+			},
+		},
+	}
+
+	loaders := map[string]func() (*Config, error){
+		"LoadConfigWithEnvironment": func() (*Config, error) {
+			return LoadConfigWithEnvironment("../../examples/config-common.yaml", "../../examples/tasks.yaml", "test")
+		},
+		"LoadConfigWithoutTasks": func() (*Config, error) {
+			return LoadConfigWithoutTasks("../../examples/config-common.yaml", "test")
+		},
+		"LoadConfigWithStdinAndEnvironment": func() (*Config, error) {
+			return LoadConfigWithStdinAndEnvironment("../../examples/config-common.yaml", "../../examples/tasks.yaml", false, "test")
+		},
+	}
+
+	for _, tt := range tests {
+		for loaderName, load := range loaders {
+			t.Run(tt.name+"/"+loaderName, func(t *testing.T) {
+				t.Setenv("DATABASE_DSN", "user:pass@tcp(localhost:3306)/test")
+				t.Setenv("BINLOG_REPLICA_DSNS", tt.envValue)
+
+				cfg, err := load()
+				if err != nil {
+					t.Fatalf("%s() error = %v", loaderName, err)
+				}
+				if !reflect.DeepEqual(cfg.BinlogReplicaDSNs, tt.want) {
+					t.Errorf("BinlogReplicaDSNs = %#v, want %#v", cfg.BinlogReplicaDSNs, tt.want)
+				}
+			})
+		}
 	}
 }

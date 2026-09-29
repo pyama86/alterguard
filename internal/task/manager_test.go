@@ -90,6 +90,11 @@ func (m *MockDBClient) GetMaxAuroraReplicaLagMs() (float64, error) {
 	return args.Get(0).(float64), args.Error(1)
 }
 
+func (m *MockDBClient) GetBinlogReplicaLagMs() (float64, error) {
+	args := m.Called()
+	return args.Get(0).(float64), args.Error(1)
+}
+
 func (m *MockDBClient) Close() error {
 	args := m.Called()
 	return args.Error(0)

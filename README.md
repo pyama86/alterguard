@@ -41,6 +41,7 @@ docker build -t alterguard .
 | `DATABASE_DSN`      | ✓        | MySQL connection string (e.g., `user:pass@tcp(localhost:3306)/dbname`) |
 | `SLACK_WEBHOOK_URL` | ✓        | Slack Webhook URL                                                      |
 | `DEBUG`             | -        | Set to `true` to enable debug logging                                  |
+| `BINLOG_REPLICA_DSNS` | -      | Comma-separated DSNs of other clusters replicating via binlog, monitored by `aurora_replica_check` |
 
 ### Configuration Files
 
@@ -134,6 +135,8 @@ buffer_pool_size_threshold_mb: 100.0
 
 For Amazon Aurora MySQL clusters, pt-osc's standard `recursion_method` cannot observe reader lag. When enabled, alterguard polls `information_schema.REPLICA_HOST_STATUS` while pt-osc runs; if the maximum reader lag exceeds `max_lag_ms`, alterguard writes the pause file passed to pt-osc as `--pause-file`, which automatically suspends pt-osc until the lag recovers and the file is removed.
 
+If `BINLOG_REPLICA_DSNS` is set, alterguard also polls `SHOW REPLICA STATUS` (falling back to `SHOW SLAVE STATUS`) on each listed cluster and uses the maximum of all lags. While binlog replication is stopped (`Seconds_Behind_Source` is `NULL`), pt-osc is paused as well.
+
 | Option            | Type    | Default                          | Description                                                                              |
 | ----------------- | ------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
 | `enabled`         | bool    | false                            | Enable Aurora reader lag monitoring                                                      |
@@ -144,7 +147,7 @@ For Amazon Aurora MySQL clusters, pt-osc's standard `recursion_method` cannot ob
 When enabled, alterguard performs a preflight before launching pt-osc:
 
 1. Creates and removes the pause file to verify filesystem permissions.
-2. Issues a `SELECT` against `information_schema.REPLICA_HOST_STATUS` to verify read permissions.
+2. Reads replica lag (`information_schema.REPLICA_HOST_STATUS`, and replica status of each `BINLOG_REPLICA_DSNS` cluster) to verify read permissions.
 
 If either check fails, pt-osc is **not** started and an error is returned. The required MySQL privileges are described in the *Aurora support* section below.
 
@@ -412,7 +415,7 @@ echo "ALTER TABLE test ADD COLUMN new_col INT;" | ./alterguard run --common-conf
 
 ## Aurora Support
 
-When running against an Amazon Aurora MySQL cluster, enable `pt_osc.aurora_replica_check` to throttle pt-osc based on reader replica lag observed in `information_schema.REPLICA_HOST_STATUS`.
+When running against an Amazon Aurora MySQL cluster, enable `pt_osc.aurora_replica_check` to throttle pt-osc based on reader replica lag observed in `information_schema.REPLICA_HOST_STATUS`. Lag of other clusters replicating via binlog can be included with `BINLOG_REPLICA_DSNS`; pt-osc is also paused while that replication is stopped.
 
 ### Required MySQL Privileges
 
@@ -421,6 +424,14 @@ The user specified in `DATABASE_DSN` must be able to read `information_schema.RE
 ```sql
 GRANT SELECT ON `information_schema`.* TO 'alterguard'@'%';
 ```
+
+When `BINLOG_REPLICA_DSNS` is set, the user in each DSN (the writer endpoint of the replicating cluster) needs `REPLICATION CLIENT` to run `SHOW REPLICA STATUS`:
+
+```sql
+GRANT REPLICATION CLIENT ON *.* TO 'alterguard'@'%';
+```
+
+Each DSN must not contain commas, since the variable is split on `,`.
 
 The other privileges already required by pt-osc and alterguard remain unchanged (`ALTER`, `CREATE`, `DROP`, `INSERT`, `UPDATE`, `DELETE`, `INDEX`, `LOCK TABLES`, `TRIGGER`, `PROCESS`, `REPLICATION CLIENT`).
 

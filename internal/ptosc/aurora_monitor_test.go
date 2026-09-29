@@ -3,6 +3,7 @@ package ptosc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pyama86/alterguard/internal/config"
+	"github.com/pyama86/alterguard/internal/database"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,7 +82,7 @@ func TestAuroraMonitorPreflight(t *testing.T) {
 		assert.Contains(t, err.Error(), "cannot create pause file")
 	})
 
-	t.Run("information_schema unreadable fails", func(t *testing.T) {
+	t.Run("replica lag unreadable fails", func(t *testing.T) {
 		dir := t.TempDir()
 		cfg := config.AuroraReplicaCheckConfig{
 			Enabled:       true,
@@ -95,7 +97,7 @@ func TestAuroraMonitorPreflight(t *testing.T) {
 
 		err = m.Preflight()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "information_schema.REPLICA_HOST_STATUS")
+		assert.Contains(t, err.Error(), "cannot read replica lag")
 	})
 }
 
@@ -130,6 +132,62 @@ func TestAuroraMonitorRunCreatesAndRemovesPauseFile(t *testing.T) {
 		_, err := os.Stat(pausePath)
 		return os.IsNotExist(err)
 	}, 1*time.Second, 10*time.Millisecond, "pause file should be removed when lag recovers")
+}
+
+func TestAuroraMonitorCheckOnce(t *testing.T) {
+	type step struct {
+		lagMs       float64
+		err         error
+		expectPause bool
+	}
+	stopped := fmt.Errorf("binlog replica: %w", database.ErrReplicationStopped)
+
+	tests := []struct {
+		name  string
+		steps []step
+	}{
+		{
+			name: "replication stopped pauses and recovery removes pause file",
+			steps: []step{
+				{err: stopped, expectPause: true},
+				{lagMs: 100, expectPause: false},
+			},
+		},
+		{
+			name: "other error keeps pause state unchanged",
+			steps: []step{
+				{err: errors.New("access denied"), expectPause: false},
+				{lagMs: 2000, expectPause: true},
+				{err: errors.New("access denied"), expectPause: true},
+				{lagMs: 100, expectPause: false},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pausePath := filepath.Join(t.TempDir(), "pause")
+			cfg := config.AuroraReplicaCheckConfig{
+				Enabled:       true,
+				MaxLagMs:      1000,
+				PauseFilePath: pausePath,
+			}
+			logger := logrus.New()
+			logger.SetLevel(logrus.FatalLevel)
+			fetcher := newFakeFetcher(0)
+			m, err := NewAuroraMonitor(cfg, fetcher, logger)
+			require.NoError(t, err)
+
+			for i, s := range tt.steps {
+				fetcher.setLag(s.lagMs)
+				fetcher.setErr(s.err)
+				m.checkOnce(context.Background())
+
+				_, statErr := os.Stat(pausePath)
+				assert.Equal(t, s.expectPause, statErr == nil, "step %d", i)
+			}
+		})
+	}
 }
 
 func TestAuroraMonitorCleanupOnCancel(t *testing.T) {
