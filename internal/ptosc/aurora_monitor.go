@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pyama86/alterguard/internal/config"
+	"github.com/pyama86/alterguard/internal/database"
 	"github.com/sirupsen/logrus"
 )
 
@@ -56,7 +57,7 @@ func (m *AuroraMonitor) PauseFilePath() string {
 	return m.pauseFilePath
 }
 
-// pause-fileの作成/削除と REPLICA_HOST_STATUS の読取が可能か事前確認する。失敗時は実行を止めるべきというシグナル。
+// pause-fileの作成/削除と replica lag の読取が可能か事前確認する。失敗時は実行を止めるべきというシグナル。
 func (m *AuroraMonitor) Preflight() error {
 	tmp, err := os.Create(m.pauseFilePath) // #nosec G304
 	if err != nil {
@@ -71,7 +72,7 @@ func (m *AuroraMonitor) Preflight() error {
 	}
 
 	if _, err := m.fetcher.GetMaxAuroraReplicaLagMs(); err != nil {
-		return fmt.Errorf("cannot read information_schema.REPLICA_HOST_STATUS: %w", err)
+		return fmt.Errorf("cannot read replica lag: %w", err)
 	}
 	return nil
 }
@@ -99,6 +100,11 @@ func (m *AuroraMonitor) checkOnce(ctx context.Context) {
 	}
 	lagMs, err := m.fetcher.GetMaxAuroraReplicaLagMs()
 	if err != nil {
+		if errors.Is(err, database.ErrReplicationStopped) {
+			m.logger.Warnf("Replication is stopped; creating pause file %s: %v", m.pauseFilePath, err)
+			m.pause()
+			return
+		}
 		m.logger.Warnf("Aurora replica lag check failed: %v", err)
 		return
 	}
@@ -106,15 +112,19 @@ func (m *AuroraMonitor) checkOnce(ctx context.Context) {
 	if lagMs > m.cfg.MaxLagMs {
 		m.logger.Warnf("Aurora replica lag %.2fms exceeds threshold %.2fms; creating pause file %s",
 			lagMs, m.cfg.MaxLagMs, m.pauseFilePath)
-		if err := m.createPauseFile(); err != nil {
-			m.logger.Errorf("Failed to create pause file %s: %v", m.pauseFilePath, err)
-		}
+		m.pause()
 		return
 	}
 
 	m.logger.Debugf("Aurora replica lag %.2fms within threshold %.2fms", lagMs, m.cfg.MaxLagMs)
 	if err := m.removePauseFileIfOwned(); err != nil {
 		m.logger.Warnf("Failed to remove pause file %s: %v", m.pauseFilePath, err)
+	}
+}
+
+func (m *AuroraMonitor) pause() {
+	if err := m.createPauseFile(); err != nil {
+		m.logger.Errorf("Failed to create pause file %s: %v", m.pauseFilePath, err)
 	}
 }
 

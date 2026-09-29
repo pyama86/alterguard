@@ -73,10 +73,11 @@ type ConnectionCheckConfig struct {
 }
 
 type Config struct {
-	Common      CommonConfig
-	Queries     []string
-	DSN         string
-	Environment string
+	Common            CommonConfig
+	Queries           []string
+	DSN               string
+	BinlogReplicaDSNs []string
+	Environment       string
 }
 
 func LoadConfig(commonConfigPath, tasksConfigPath string) (*Config, error) {
@@ -94,19 +95,7 @@ func LoadConfigWithEnvironment(commonConfigPath, tasksConfigPath, environment st
 		return nil, fmt.Errorf("failed to load queries config: %w", err)
 	}
 
-	dsn := os.Getenv("DATABASE_DSN")
-	if dsn == "" {
-		return nil, fmt.Errorf("DATABASE_DSN environment variable is not set")
-	}
-
-	env := resolveEnvironment(environment)
-
-	return &Config{
-		Common:      *common,
-		Queries:     queries,
-		DSN:         dsn,
-		Environment: env,
-	}, nil
+	return newConfig(common, queries, environment)
 }
 
 func LoadConfigWithoutTasks(commonConfigPath, environment string) (*Config, error) {
@@ -115,19 +104,7 @@ func LoadConfigWithoutTasks(commonConfigPath, environment string) (*Config, erro
 		return nil, fmt.Errorf("failed to load common config: %w", err)
 	}
 
-	dsn := os.Getenv("DATABASE_DSN")
-	if dsn == "" {
-		return nil, fmt.Errorf("DATABASE_DSN environment variable is not set")
-	}
-
-	env := resolveEnvironment(environment)
-
-	return &Config{
-		Common:      *common,
-		Queries:     []string{},
-		DSN:         dsn,
-		Environment: env,
-	}, nil
+	return newConfig(common, []string{}, environment)
 }
 
 func LoadConfigWithStdin(commonConfigPath, tasksConfigPath string, useStdin bool) (*Config, error) {
@@ -161,19 +138,32 @@ func LoadConfigWithStdinAndEnvironment(commonConfigPath, tasksConfigPath string,
 		return nil, fmt.Errorf("no queries provided")
 	}
 
+	return newConfig(common, queries, environment)
+}
+
+func newConfig(common *CommonConfig, queries []string, environment string) (*Config, error) {
 	dsn := os.Getenv("DATABASE_DSN")
 	if dsn == "" {
 		return nil, fmt.Errorf("DATABASE_DSN environment variable is not set")
 	}
 
-	env := resolveEnvironment(environment)
-
 	return &Config{
-		Common:      *common,
-		Queries:     queries,
-		DSN:         dsn,
-		Environment: env,
+		Common:            *common,
+		Queries:           queries,
+		DSN:               dsn,
+		BinlogReplicaDSNs: parseDSNList(os.Getenv("BINLOG_REPLICA_DSNS")),
+		Environment:       resolveEnvironment(environment),
 	}, nil
+}
+
+func parseDSNList(raw string) []string {
+	dsns := []string{}
+	for _, dsn := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(dsn); trimmed != "" {
+			dsns = append(dsns, trimmed)
+		}
+	}
+	return dsns
 }
 
 func resolveEnvironment(cmdLineEnv string) string {

@@ -69,8 +69,15 @@ func cleanupTable(tableName string) error {
 
 	logger.Info("Database connection established")
 
+	replicaLagFetcher, closeReplicaLagFetcher, err := newReplicaLagFetcher(cfg, dbClient)
+	if err != nil {
+		logger.Errorf("Failed to initialize replica lag fetcher: %v", err)
+		return fmt.Errorf("replica lag fetcher initialization failed: %w", err)
+	}
+	defer closeReplicaLagFetcher()
+
 	// Initialize pt-osc executor (not used for cleanup but required for manager)
-	ptoscExecutor := ptosc.NewPtOscExecutor(logger, dbClient)
+	ptoscExecutor := ptosc.NewPtOscExecutor(logger, replicaLagFetcher)
 
 	// Initialize pt-archiver executor (used for cleanup if enabled)
 	ptarchiverExecutor := ptarchiver.NewPtArchiverExecutor(logger)

@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type MockDB struct {
@@ -30,6 +32,14 @@ func (m *MockDB) Exec(query string, args ...any) (sql.Result, error) {
 		return nil, ret.Error(1)
 	}
 	return ret.Get(0).(sql.Result), ret.Error(1)
+}
+
+func (m *MockDB) QueryStringRows(query string) ([]map[string]sql.NullString, error) {
+	ret := m.Called(query)
+	if ret.Get(0) == nil {
+		return nil, ret.Error(1)
+	}
+	return ret.Get(0).([]map[string]sql.NullString), ret.Error(1)
 }
 
 type MockResult struct {
@@ -516,4 +526,92 @@ func TestGetTableBufferPoolSizeMB(t *testing.T) {
 		assert.Contains(t, query, "@@innodb_page_size")
 		assert.Contains(t, query, "TABLE_NAME = ?")
 	})
+}
+
+func TestGetBinlogReplicaLagMs(t *testing.T) {
+	lag := func(v string) sql.NullString { return sql.NullString{String: v, Valid: true} }
+	null := sql.NullString{}
+
+	tests := []struct {
+		name          string
+		replicaRows   []map[string]sql.NullString
+		replicaError  error
+		expectSlave   bool
+		slaveRows     []map[string]sql.NullString
+		slaveError    error
+		expectLagMs   float64
+		expectError   bool
+		expectStopped bool
+	}{
+		{
+			name:        "SHOW REPLICA STATUS single source",
+			replicaRows: []map[string]sql.NullString{{"Seconds_Behind_Source": lag("3")}},
+			expectLagMs: 3000,
+		},
+		{
+			name: "multi source returns max",
+			replicaRows: []map[string]sql.NullString{
+				{"Seconds_Behind_Source": lag("1")},
+				{"Seconds_Behind_Source": lag("7")},
+				{"Seconds_Behind_Source": lag("0")},
+			},
+			expectLagMs: 7000,
+		},
+		{
+			name:         "falls back to SHOW SLAVE STATUS",
+			replicaError: assert.AnError,
+			expectSlave:  true,
+			slaveRows:    []map[string]sql.NullString{{"Seconds_Behind_Master": lag("2")}},
+			expectLagMs:  2000,
+		},
+		{
+			name:         "both queries fail",
+			replicaError: assert.AnError,
+			expectSlave:  true,
+			slaveError:   assert.AnError,
+			expectError:  true,
+		},
+		{
+			name:          "NULL means replication stopped",
+			replicaRows:   []map[string]sql.NullString{{"Seconds_Behind_Source": lag("1")}, {"Seconds_Behind_Source": null}},
+			expectError:   true,
+			expectStopped: true,
+		},
+		{
+			name:        "no rows means replication not configured",
+			replicaRows: []map[string]sql.NullString{},
+			expectError: true,
+		},
+		{
+			name:        "lag column missing",
+			replicaRows: []map[string]sql.NullString{{"Replica_IO_Running": lag("Yes")}},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockDB := &MockDB{}
+			logger := logrus.New()
+			logger.SetLevel(logrus.PanicLevel)
+			client := &MySQLClient{db: nil, logger: logger}
+
+			mockDB.On("QueryStringRows", "SHOW REPLICA STATUS").Return(tt.replicaRows, tt.replicaError)
+			if tt.expectSlave {
+				mockDB.On("QueryStringRows", "SHOW SLAVE STATUS").Return(tt.slaveRows, tt.slaveError)
+			}
+
+			lagMs, err := client.getBinlogReplicaLagMsWithDB(mockDB)
+
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Equal(t, tt.expectStopped, errors.Is(err, ErrReplicationStopped))
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectLagMs, lagMs)
+			}
+
+			mockDB.AssertExpectations(t)
+		})
+	}
 }
