@@ -21,7 +21,8 @@ This command performs a RENAME TABLE operation to swap:
 - original_table -> original_table_old
 - _original_table_new -> original_table
 
-It also monitors for metadata locks and sends warnings if they exceed the configured threshold.`,
+It also monitors for metadata locks and sends warnings if they exceed the configured threshold.
+With --drop-triggers, pt-osc triggers are dropped after a successful swap.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return swapTable(args[0])
@@ -29,6 +30,7 @@ It also monitors for metadata locks and sends warnings if they exceed the config
 }
 
 func init() {
+	swapCmd.Flags().BoolVar(&dropTriggers, "drop-triggers", false, "Drop pt-osc triggers after successful swap")
 	rootCmd.AddCommand(swapCmd)
 }
 
@@ -89,5 +91,15 @@ func swapTable(tableName string) error {
 	}
 
 	logger.Infof("Table swap completed successfully for %s", tableName)
+
+	if dropTriggers {
+		logger.Infof("Dropping triggers for %s", tableName)
+		if err := taskManager.CleanupTriggers(tableName); err != nil {
+			logger.Errorf("Failed to drop triggers: %v", err)
+			return fmt.Errorf("trigger cleanup failed: %w", err)
+		}
+		logger.Infof("Trigger cleanup completed for %s", tableName)
+	}
+
 	return nil
 }

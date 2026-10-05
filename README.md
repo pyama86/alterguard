@@ -220,6 +220,10 @@ Performs RENAME TABLE operations:
 - `original_table` → `original_table_old`
 - `_original_table_new` → `original_table`
 
+**Options:**
+
+- `--drop-triggers`: Drop triggers created by pt-osc (`pt_osc_table_name_*`) after a successful swap
+
 #### `cleanup [table_name]`
 
 Cleans up resources created by pt-online-schema-change.
