@@ -608,6 +608,17 @@ func (m *Manager) SwapTable(tableName string) error {
 	return nil
 }
 
+// swap 失敗時はトリガーを残して稼働中のテーブルへの書き込み同期を維持する
+func (m *Manager) SwapTableWithTriggerCleanup(tableName string) error {
+	if err := m.SwapTable(tableName); err != nil {
+		return err
+	}
+	if err := m.CleanupTriggers(tableName); err != nil {
+		return fmt.Errorf("trigger cleanup failed after successful swap: %w", err)
+	}
+	return nil
+}
+
 func (m *Manager) CleanupOldTable(tableName string) error {
 	m.logger.Infof("Starting cleanup for table %s", tableName)
 
