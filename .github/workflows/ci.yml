@@ -47,13 +47,6 @@ jobs:
       - name: Run tests with coverage
         run: make test-coverage
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.out
-          flags: unittests
-          name: codecov-umbrella
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
