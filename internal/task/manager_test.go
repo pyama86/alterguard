@@ -777,6 +777,117 @@ func TestSwapTable(t *testing.T) {
 	}
 }
 
+func TestSwapTableWithTriggerCleanup(t *testing.T) {
+	const tableName = "test_table"
+	const newTableName = "_test_table_new"
+	swapSQL := "RENAME TABLE test_table TO test_table_old, _test_table_new TO test_table"
+	dropSQLs := []string{
+		"DROP TRIGGER IF EXISTS pt_osc_testdb_test_table_del",
+		"DROP TRIGGER IF EXISTS pt_osc_testdb_test_table_upd",
+		"DROP TRIGGER IF EXISTS pt_osc_testdb_test_table_ins",
+	}
+	expectedTriggers := []string{
+		"pt_osc_testdb_test_table_del",
+		"pt_osc_testdb_test_table_upd",
+		"pt_osc_testdb_test_table_ins",
+	}
+
+	tests := []struct {
+		name           string
+		dryRun         bool
+		newTableExists bool
+		expectError    bool
+		expectExecSQL  []string
+	}{
+		{
+			name:           "swap succeeds then triggers are dropped",
+			newTableExists: true,
+			expectExecSQL:  append([]string{swapSQL}, dropSQLs...),
+		},
+		{
+			name:           "swap fails so triggers are not dropped",
+			newTableExists: false,
+			expectError:    true,
+		},
+		{
+			name:           "dry run executes nothing",
+			dryRun:         true,
+			newTableExists: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := logrus.New()
+			logger.SetLevel(logrus.FatalLevel)
+
+			mockDB := &MockDBClient{}
+			mockPtOsc := &MockPtOscExecutor{}
+			mockSlack := &MockSlackNotifier{}
+
+			cfg := &config.Config{
+				DSN: "user:password@tcp(localhost:3306)/testdb?charset=utf8mb4",
+				Common: config.CommonConfig{
+					SessionConfig: config.SessionConfig{
+						LockWaitTimeout:       0,
+						InnodbLockWaitTimeout: 0,
+					},
+					DisableAnalyzeTable: false,
+				},
+			}
+			mockPtArchiver := &MockPtArchiverExecutor{}
+			manager := NewManager(mockDB, mockPtOsc, mockPtArchiver, mockSlack, logger, cfg, tt.dryRun)
+
+			mockDB.On("TableExists", tableName).Return(true, nil)
+			mockDB.On("TableExists", newTableName).Return(tt.newTableExists, nil)
+
+			swapTaskName := "swap"
+			cleanupTaskName := "trigger-cleanup"
+			if tt.dryRun {
+				swapTaskName = "swap (DRY RUN)"
+				cleanupTaskName = "trigger-cleanup (DRY RUN)"
+			}
+
+			if tt.newTableExists {
+				mockDB.On("GetTableRowCountForSwap", tableName).Return(int64(1000), nil)
+				mockDB.On("GetNewTableRowCountForSwap", tableName).Return(int64(980), nil)
+				if !tt.dryRun {
+					mockDB.On("AnalyzeTable", newTableName).Return(nil)
+				}
+
+				expectedQuery := fmt.Sprintf("`%s`", swapSQL)
+				mockSlack.On("NotifyStartWithQuery", swapTaskName, tableName, expectedQuery, int64(0)).Return(nil)
+				mockDB.On("SetSessionConfig", 0, 0).Return(nil)
+				mockSlack.On("NotifySuccessWithQuery", swapTaskName, tableName, expectedQuery, int64(0), mock.Anything).Return(nil)
+
+				mockSlack.On("NotifyTriggerCleanupStart", cleanupTaskName, tableName, expectedTriggers).Return(nil)
+				mockSlack.On("NotifyTriggerCleanupSuccess", cleanupTaskName, tableName, expectedTriggers, mock.Anything).Return(nil)
+			}
+
+			for _, sql := range tt.expectExecSQL {
+				mockDB.On("ExecuteAlter", sql).Return(nil)
+			}
+
+			err := manager.SwapTableWithTriggerCleanup(tableName)
+
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			if len(tt.expectExecSQL) == 0 {
+				mockDB.AssertNotCalled(t, "ExecuteAlter", mock.Anything)
+			}
+			if tt.expectError {
+				mockSlack.AssertNotCalled(t, "NotifyTriggerCleanupStart", mock.Anything, mock.Anything, mock.Anything)
+			}
+			mockDB.AssertExpectations(t)
+			mockSlack.AssertExpectations(t)
+		})
+	}
+}
+
 func TestCleanupTable(t *testing.T) {
 	tests := []struct {
 		name                        string
