@@ -297,22 +297,50 @@ func (c *MySQLClient) GetTableBufferPoolSizeMB(schemaName, tableName string) (fl
 
 	fullTableName := fmt.Sprintf("`%s`.`%s`", schemaName, tableName)
 
-	query := `
-		SELECT
-			ROUND(COUNT(*) * @@innodb_page_size / 1024 / 1024, 2) AS mb
-		FROM INFORMATION_SCHEMA.INNODB_BUFFER_PAGE
-		WHERE TABLE_NAME = ?
-	`
+	query, arg := bufferPoolSizeQuery(c.hasInnodbCachedIndexes(), schemaName, tableName)
 
 	c.logger.Debugf("Getting buffer pool size for table %s", fullTableName)
 
-	err := c.db.Get(&sizeMB, query, fullTableName)
+	err := c.db.Get(&sizeMB, query, arg)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get buffer pool size for %s: %w", fullTableName, err)
 	}
 
 	c.logger.Infof("Buffer pool size for table %s: %.2f MB", fullTableName, sizeMB)
 	return sizeMB, nil
+}
+
+// hasInnodbCachedIndexes は MySQL 8.0+ で追加された INNODB_CACHED_INDEXES の有無を返す。
+func (c *MySQLClient) hasInnodbCachedIndexes() bool {
+	var count int
+	err := c.db.Get(&count, `
+		SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+		WHERE TABLE_SCHEMA = 'information_schema' AND TABLE_NAME = 'INNODB_CACHED_INDEXES'
+	`)
+	if err != nil {
+		c.logger.Warnf("Failed to check INNODB_CACHED_INDEXES, falling back to INNODB_BUFFER_PAGE: %v", err)
+		return false
+	}
+	return count > 0
+}
+
+func bufferPoolSizeQuery(hasCachedIndexes bool, schemaName, tableName string) (query, arg string) {
+	if hasCachedIndexes {
+		return `
+			SELECT ROUND(COALESCE(SUM(c.N_CACHED_PAGES), 0) * @@innodb_page_size / 1024 / 1024, 2) AS mb
+			FROM INFORMATION_SCHEMA.INNODB_TABLES t
+			JOIN INFORMATION_SCHEMA.INNODB_INDEXES i ON i.TABLE_ID = t.TABLE_ID
+			LEFT JOIN INFORMATION_SCHEMA.INNODB_CACHED_INDEXES c ON c.INDEX_ID = i.INDEX_ID
+			WHERE t.NAME = ?
+		`, fmt.Sprintf("%s/%s", schemaName, tableName)
+	}
+
+	return `
+		SELECT
+			ROUND(COUNT(*) * @@innodb_page_size / 1024 / 1024, 2) AS mb
+		FROM INFORMATION_SCHEMA.INNODB_BUFFER_PAGE
+		WHERE TABLE_NAME = ?
+	`, fmt.Sprintf("`%s`.`%s`", schemaName, tableName)
 }
 
 func (c *MySQLClient) GetMaxAuroraReplicaLagMs() (float64, error) {
